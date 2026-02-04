@@ -16,6 +16,7 @@ _DEFAULT_MODEL_PATHS = {
     "div": _BASE_DIR / "divformer",
 }
 
+
 _OPERATION_SYMBOLS = {
     "add": "+",
     "sub": "-",
@@ -380,24 +381,36 @@ class MathFormerAPI:
 
         return int(parts[0]), int(parts[1])
 
-    def add(self, expression: str) -> str:
-        a, b = self._parse_expression(expression, "add")
-        result = self._multi_add(a, b)
+    def add(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
+        if b is None:
+            val_a, val_b = self._parse_expression(str(a), "add")
+        else:
+            val_a, val_b = int(a), int(b)
+        result = self._multi_add(val_a, val_b)
         return str(result)
 
-    def sub(self, expression: str) -> str:
-        a, b = self._parse_expression(expression, "sub")
-        result = self._multi_sub(a, b)
+    def sub(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
+        if b is None:
+            val_a, val_b = self._parse_expression(str(a), "sub")
+        else:
+            val_a, val_b = int(a), int(b)
+        result = self._multi_sub(val_a, val_b)
         return str(result)
 
-    def mul(self, expression: str) -> str:
-        a, b = self._parse_expression(expression, "mul")
-        result = self._multi_mul(a, b)
+    def mul(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
+        if b is None:
+            val_a, val_b = self._parse_expression(str(a), "mul")
+        else:
+            val_a, val_b = int(a), int(b)
+        result = self._multi_mul(val_a, val_b)
         return str(result)
 
-    def div(self, expression: str) -> str:
-        a, b = self._parse_expression(expression, "div")
-        quotient, remainder = self._multi_div(a, b)
+    def div(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
+        if b is None:
+            val_a, val_b = self._parse_expression(str(a), "div")
+        else:
+            val_a, val_b = int(a), int(b)
+        quotient, remainder = self._multi_div(val_a, val_b)
         if remainder == 0:
             return str(quotient)
         else:
