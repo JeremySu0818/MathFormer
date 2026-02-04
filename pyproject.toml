@@ -42,9 +42,9 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/JeremySu0818/MathFormer-API"
-"Bug Tracker" = "https://github.com/JeremySu0818/MathFormer-API/issues"
-"Repository" = "https://github.com/JeremySu0818/MathFormer-API"
+"Homepage" = "https://github.com/JeremySu0818/MathFormer"
+"Bug Tracker" = "https://github.com/JeremySu0818/MathFormer/issues"
+"Repository" = "https://github.com/JeremySu0818/MathFormer"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
