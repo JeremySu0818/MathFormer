@@ -168,7 +168,7 @@ class MathFormerAPI:
     def _raw_predict(self, operation: str, expression: str) -> str:
         if operation not in self.models:
             raise ValueError(
-                f"未知的運算類型: {operation}. 可用: {list(self.models.keys())}"
+                f"Unknown operation type: {operation}. Available: {list(self.models.keys())}"
             )
         return self.models[operation].predict(expression)
 
@@ -319,7 +319,7 @@ class MathFormerAPI:
 
     def _multi_div(self, a: int, b: int) -> Tuple[int, int]:
         if b == 0:
-            raise ZeroDivisionError("除數不能為零")
+            raise ZeroDivisionError("Divisor cannot be zero")
 
         negative = (a < 0) ^ (b < 0)
         a, b = abs(a), abs(b)
@@ -372,7 +372,7 @@ class MathFormerAPI:
                     idx = rest.index("-")
                     parts = ["-" + rest[:idx], rest[idx + 1 :]]
                 else:
-                    raise ValueError(f"無法解析表達式: {expression}")
+                    raise ValueError(f"Cannot parse expression: {expression}")
             else:
                 parts = expression.split("-")
         elif operation == "mul":
@@ -382,17 +382,17 @@ class MathFormerAPI:
             expression = expression.replace("÷", "/")
             parts = expression.split("/")
         else:
-            raise ValueError(f"未知的運算類型: {operation}")
+            raise ValueError(f"Unknown operation type: {operation}")
 
         if len(parts) != 2:
-            raise ValueError(f"無法解析表達式: {expression}")
+            raise ValueError(f"Cannot parse expression: {expression}")
 
         return int(parts[0]), int(parts[1])
 
     def add(self, *args: Union[str, int]) -> str:
         values = []
         if len(args) == 0:
-            raise ValueError("需要至少一個參數")
+            raise ValueError("At least one argument is required")
 
         if len(args) == 1 and isinstance(args[0], str) and "+" in args[0]:
             expression = args[0].replace(" ", "").replace("=", "")
@@ -400,12 +400,14 @@ class MathFormerAPI:
             try:
                 values = [int(p) for p in parts]
             except ValueError:
-                raise ValueError(f"無法解析表達式: {expression}")
+                raise ValueError(f"Cannot parse expression: {expression}")
         else:
             try:
                 values = [int(a) for a in args]
             except ValueError:
-                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+                raise ValueError(
+                    f"Arguments contain values that cannot be converted to integers: {args}"
+                )
 
         if not values:
             return "0"
@@ -419,7 +421,7 @@ class MathFormerAPI:
     def sub(self, *args: Union[str, int]) -> str:
         values = []
         if len(args) == 0:
-            raise ValueError("需要至少一個參數")
+            raise ValueError("At least one argument is required")
 
         if len(args) == 1 and isinstance(args[0], str) and "-" in args[0].lstrip("-"):
             expression = args[0].replace(" ", "").replace("=", "")
@@ -434,7 +436,9 @@ class MathFormerAPI:
             try:
                 values = [int(a) for a in args]
             except ValueError:
-                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+                raise ValueError(
+                    f"Arguments contain values that cannot be converted to integers: {args}"
+                )
 
         if not values:
             return "0"
@@ -448,7 +452,7 @@ class MathFormerAPI:
     def mul(self, *args: Union[str, int]) -> str:
         values = []
         if len(args) == 0:
-            raise ValueError("需要至少一個參數")
+            raise ValueError("At least one argument is required")
 
         if (
             len(args) == 1
@@ -460,12 +464,14 @@ class MathFormerAPI:
             try:
                 values = [int(p) for p in parts]
             except ValueError:
-                raise ValueError(f"無法解析表達式: {expression}")
+                raise ValueError(f"Cannot parse expression: {expression}")
         else:
             try:
                 values = [int(a) for a in args]
             except ValueError:
-                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+                raise ValueError(
+                    f"Arguments contain values that cannot be converted to integers: {args}"
+                )
 
         if not values:
             return "0"
@@ -479,7 +485,7 @@ class MathFormerAPI:
     def div(self, *args: Union[str, int]) -> str:
         values = []
         if len(args) == 0:
-            raise ValueError("需要至少一個參數")
+            raise ValueError("At least one argument is required")
 
         if (
             len(args) == 1
@@ -491,12 +497,14 @@ class MathFormerAPI:
             try:
                 values = [int(p) for p in parts]
             except ValueError:
-                raise ValueError(f"無法解析表達式: {expression}")
+                raise ValueError(f"Cannot parse expression: {expression}")
         else:
             try:
                 values = [int(a) for a in args]
             except ValueError:
-                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+                raise ValueError(
+                    f"Arguments contain values that cannot be converted to integers: {args}"
+                )
 
         if not values:
             return "0"
@@ -534,7 +542,7 @@ class MathFormerAPI:
             else:
                 return f"Q{quotient}R{remainder}"
         else:
-            raise ValueError(f"未知的運算類型: {operation}")
+            raise ValueError(f"Unknown operation type: {operation}")
 
     def batch_predict(
         self,
@@ -552,7 +560,7 @@ class MathFormerAPI:
             elif operation == "div":
                 results.append(self.div(expr))
             else:
-                raise ValueError(f"未知的運算類型: {operation}")
+                raise ValueError(f"Unknown operation type: {operation}")
         return results
 
     def get_model_info(self) -> Dict[str, Any]:
