@@ -3,7 +3,16 @@ from typing import Optional, Dict, Any, List, Union, Tuple
 from pathlib import Path
 
 import torch
-from transformers import LlamaForCausalLM
+from transformers import LlamaForCausalLM, logging
+
+import os
+import warnings
+
+# 靜音 transformers 與相關警告
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+warnings.filterwarnings("ignore")
+logging.set_verbosity_error()
+logging.disable_progress_bar()
 
 from .tokenizer import MathTokenizer
 
