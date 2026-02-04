@@ -1,0 +1,9 @@
+{
+  "tokenizer_class": "MathTokenizer",
+  "model_max_length": 64,
+  "padding_side": "right",
+  "bos_token": "<s>",
+  "eos_token": "</s>",
+  "unk_token": "<unk>",
+  "pad_token": "<pad>"
+}
