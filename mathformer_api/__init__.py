@@ -9,20 +9,20 @@ __version__ = "1.0.0"
 _default_api = MathFormerAPI()
 
 
-def add(a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-    return _default_api.add(a, b)
+def add(*args: Union[str, int]) -> str:
+    return _default_api.add(*args)
 
 
-def sub(a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-    return _default_api.sub(a, b)
+def sub(*args: Union[str, int]) -> str:
+    return _default_api.sub(*args)
 
 
-def mul(a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-    return _default_api.mul(a, b)
+def mul(*args: Union[str, int]) -> str:
+    return _default_api.mul(*args)
 
 
-def div(a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-    return _default_api.div(a, b)
+def div(*args: Union[str, int]) -> str:
+    return _default_api.div(*args)
 
 
 def calculate(operation: str, a, b) -> str:

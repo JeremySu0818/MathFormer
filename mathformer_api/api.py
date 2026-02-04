@@ -381,40 +381,128 @@ class MathFormerAPI:
 
         return int(parts[0]), int(parts[1])
 
-    def add(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-        if b is None:
-            val_a, val_b = self._parse_expression(str(a), "add")
+    def add(self, *args: Union[str, int]) -> str:
+        values = []
+        if len(args) == 0:
+            raise ValueError("需要至少一個參數")
+
+        if len(args) == 1 and isinstance(args[0], str) and "+" in args[0]:
+            expression = args[0].replace(" ", "").replace("=", "")
+            parts = expression.split("+")
+            try:
+                values = [int(p) for p in parts]
+            except ValueError:
+                raise ValueError(f"無法解析表達式: {expression}")
         else:
-            val_a, val_b = int(a), int(b)
-        result = self._multi_add(val_a, val_b)
+            try:
+                values = [int(a) for a in args]
+            except ValueError:
+                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+
+        if not values:
+            return "0"
+
+        result = values[0]
+        for val in values[1:]:
+            result = self._multi_add(result, val)
+
         return str(result)
 
-    def sub(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-        if b is None:
-            val_a, val_b = self._parse_expression(str(a), "sub")
+    def sub(self, *args: Union[str, int]) -> str:
+        values = []
+        if len(args) == 0:
+            raise ValueError("需要至少一個參數")
+
+        if len(args) == 1 and isinstance(args[0], str) and "-" in args[0].lstrip("-"):
+            expression = args[0].replace(" ", "").replace("=", "")
+            if expression.startswith("-"):
+                temp_expr = expression[1:]
+                parts = temp_expr.split("-")
+                values = [-int(parts[0])] + [int(p) for p in parts[1:]]
+            else:
+                parts = expression.split("-")
+                values = [int(p) for p in parts]
         else:
-            val_a, val_b = int(a), int(b)
-        result = self._multi_sub(val_a, val_b)
+            try:
+                values = [int(a) for a in args]
+            except ValueError:
+                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+
+        if not values:
+            return "0"
+
+        result = values[0]
+        for val in values[1:]:
+            result = self._multi_sub(result, val)
+
         return str(result)
 
-    def mul(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-        if b is None:
-            val_a, val_b = self._parse_expression(str(a), "mul")
+    def mul(self, *args: Union[str, int]) -> str:
+        values = []
+        if len(args) == 0:
+            raise ValueError("需要至少一個參數")
+
+        if (
+            len(args) == 1
+            and isinstance(args[0], str)
+            and any(op in args[0] for op in ["*", "×"])
+        ):
+            expression = args[0].replace(" ", "").replace("=", "").replace("×", "*")
+            parts = expression.split("*")
+            try:
+                values = [int(p) for p in parts]
+            except ValueError:
+                raise ValueError(f"無法解析表達式: {expression}")
         else:
-            val_a, val_b = int(a), int(b)
-        result = self._multi_mul(val_a, val_b)
+            try:
+                values = [int(a) for a in args]
+            except ValueError:
+                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+
+        if not values:
+            return "0"
+
+        result = values[0]
+        for val in values[1:]:
+            result = self._multi_mul(result, val)
+
         return str(result)
 
-    def div(self, a: Union[str, int], b: Optional[Union[int, str]] = None) -> str:
-        if b is None:
-            val_a, val_b = self._parse_expression(str(a), "div")
+    def div(self, *args: Union[str, int]) -> str:
+        values = []
+        if len(args) == 0:
+            raise ValueError("需要至少一個參數")
+
+        if (
+            len(args) == 1
+            and isinstance(args[0], str)
+            and any(op in args[0] for op in ["/", "÷"])
+        ):
+            expression = args[0].replace(" ", "").replace("=", "").replace("÷", "/")
+            parts = expression.split("/")
+            try:
+                values = [int(p) for p in parts]
+            except ValueError:
+                raise ValueError(f"無法解析表達式: {expression}")
         else:
-            val_a, val_b = int(a), int(b)
-        quotient, remainder = self._multi_div(val_a, val_b)
-        if remainder == 0:
-            return str(quotient)
+            try:
+                values = [int(a) for a in args]
+            except ValueError:
+                raise ValueError(f"參數包含無法轉換為整數的值: {args}")
+
+        if not values:
+            return "0"
+
+        result_q = values[0]
+        result_r = 0
+
+        for val in values[1:]:
+            result_q, result_r = self._multi_div(result_q, val)
+
+        if result_r == 0:
+            return str(result_q)
         else:
-            return f"Q{quotient}R{remainder}"
+            return f"Q{result_q}R{result_r}"
 
     def calculate(
         self, operation: str, a: Union[int, float, str], b: Union[int, float, str]
