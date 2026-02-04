@@ -91,6 +91,15 @@ MathFormer isn't just calling Python's `+` or `-` operators. It actually uses a 
 1.  **Single-Step Prediction**: For small single-digit operations (e.g., `5+7`), it queries a Transformer model customized for that operation.
 2.  **Multi-Digit Logic**: For larger numbers (e.g., `123+456`), the library implements the standard grade-school algorithms (carrying, borrowing, partial products) but delegates the fundamental single-digit arithmetic steps to the Transformer model.
 
+## Training Repositories
+
+The training code and datasets for the models used in this library can be found in the following repositories:
+
+- [JeremySu0818/AddFormer](https://github.com/JeremySu0818/AddFormer)
+- [JeremySu0818/SubFormer](https://github.com/JeremySu0818/SubFormer)
+- [JeremySu0818/MulFormer](https://github.com/JeremySu0818/MulFormer)
+- [JeremySu0818/DivFormer](https://github.com/JeremySu0818/DivFormer)
+
 ## Requirements
 
 - Python >= 3.8
