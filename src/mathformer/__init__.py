@@ -3,7 +3,7 @@ from .api import MathFormerAPI, MathFormer
 from .tokenizer import MathTokenizer
 
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 
 _default_api = MathFormerAPI()
