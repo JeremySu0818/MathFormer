@@ -8,7 +8,6 @@ from transformers import LlamaForCausalLM, logging
 import os
 import warnings
 
-# 靜音 transformers 與相關警告
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 warnings.filterwarnings("ignore")
 logging.set_verbosity_error()
