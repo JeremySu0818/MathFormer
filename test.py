@@ -1,4 +1,4 @@
-import mathformer_api as math
+import mathformer as math
 
 
 print(math.add(1, 1, 1))
