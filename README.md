@@ -39,9 +39,12 @@ print(f"1000 - 250 = {result}") # Output: 750
 result = mathformer.mul(12, 12)
 print(f"12 * 12 = {result}")    # Output: 144
 
-# Division (returns Quotient and Remainder if applicable)
+# Division (returns decimal for non-exact results)
 result = mathformer.div(100, 3)
-print(f"100 / 3 = {result}")    # Output: Q33R1
+print(f"100 / 3 = {result}")    # Output: 0.3333333333
+
+result = mathformer.div(100, 4)
+print(f"100 / 4 = {result}")    # Output: 25 (exact division)
 ```
 
 You can also pass string expressions:
@@ -50,6 +53,40 @@ You can also pass string expressions:
 print(mathformer.add("100 + 200"))
 print(mathformer.calculate("mul", 50, 4))
 ```
+
+## Decimal Support (v1.1.0+)
+
+MathFormer now supports decimal (floating-point) arithmetic while maintaining its algorithm-based approach:
+
+```python
+import mathformer
+
+# Decimal addition
+result = mathformer.add(1.5, 2.3)
+print(f"1.5 + 2.3 = {result}")  # Output: 3.8
+
+# Decimal subtraction (with negative results)
+result = mathformer.sub(2.3, 5.5)
+print(f"2.3 - 5.5 = {result}")  # Output: -3.2
+
+# Decimal multiplication
+result = mathformer.mul(1.5, 2.5)
+print(f"1.5 * 2.5 = {result}")  # Output: 3.75
+
+# Division with custom precision
+result = mathformer.div(1, 7, precision=5)
+print(f"1 / 7 = {result}")      # Output: 0.14285
+
+# Mixed decimal and integer operations
+result = mathformer.div(7.5, 2.5)
+print(f"7.5 / 2.5 = {result}")  # Output: 3
+```
+
+### Division Behavior
+
+- **Exact division**: Returns an integer (e.g., `10 / 2 = 5`)
+- **Non-exact division**: Returns a decimal with up to 10 decimal places (configurable via `precision` parameter)
+- **No more Q/R format**: Division now outputs decimals instead of `Q{quotient}R{remainder}` format
 
 ## Advanced Usage
 

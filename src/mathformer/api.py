@@ -1,5 +1,8 @@
 import re
+from decimal import Decimal, getcontext
 from typing import Optional, Dict, Any, List, Union, Tuple
+
+getcontext().prec = 50
 from pathlib import Path
 
 import torch
@@ -360,6 +363,170 @@ class MathFormerAPI:
 
         return quotient, remainder
 
+
+
+    def _parse_decimal(self, value: Union[str, int, float, Decimal]) -> Tuple[int, int]:
+        """
+        將小數解析為 (整數值, 小數位數) 的形式
+        例如: 3.14 -> (314, 2), 100 -> (100, 0), 0.5 -> (5, 1)
+        """
+        if isinstance(value, (int, float)):
+            value = str(value)
+        elif isinstance(value, Decimal):
+            value = str(value)
+
+        value = value.strip()
+
+        negative = value.startswith("-")
+        if negative:
+            value = value[1:]
+
+        if "." in value:
+            integer_part, decimal_part = value.split(".")
+            integer_part = integer_part.lstrip("0") or "0"
+            combined = integer_part + decimal_part
+            combined = combined.lstrip("0") or "0"
+            decimal_places = len(decimal_part)
+            int_value = int(combined)
+        else:
+            int_value = int(value)
+            decimal_places = 0
+
+        if negative:
+            int_value = -int_value
+
+        return int_value, decimal_places
+
+    def _format_decimal_result(self, int_value: int, decimal_places: int) -> str:
+        """
+        將 (整數值, 小數位數) 格式化為小數字串
+        例如: (314, 2) -> "3.14", (100, 0) -> "100"
+        """
+        if decimal_places == 0:
+            return str(int_value)
+
+        negative = int_value < 0
+        int_value = abs(int_value)
+
+        str_value = str(int_value)
+
+        if len(str_value) <= decimal_places:
+            str_value = "0" * (decimal_places - len(str_value) + 1) + str_value
+
+        integer_part = str_value[:-decimal_places]
+        decimal_part = str_value[-decimal_places:]
+
+        decimal_part = decimal_part.rstrip("0")
+
+        if decimal_part:
+            result = f"{integer_part}.{decimal_part}"
+        else:
+            result = integer_part
+
+        if negative:
+            result = "-" + result
+
+        return result
+
+    def _decimal_add(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
+        """使用演算法進行小數加法"""
+        a_val, a_dec = self._parse_decimal(a)
+        b_val, b_dec = self._parse_decimal(b)
+
+        max_dec = max(a_dec, b_dec)
+        if a_dec < max_dec:
+            a_val *= (10 ** (max_dec - a_dec))
+        if b_dec < max_dec:
+            b_val *= (10 ** (max_dec - b_dec))
+
+        result = self._multi_add(a_val, b_val)
+
+        return self._format_decimal_result(result, max_dec)
+
+    def _decimal_sub(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
+        """使用演算法進行小數減法"""
+        a_val, a_dec = self._parse_decimal(a)
+        b_val, b_dec = self._parse_decimal(b)
+
+        max_dec = max(a_dec, b_dec)
+        if a_dec < max_dec:
+            a_val *= (10 ** (max_dec - a_dec))
+        if b_dec < max_dec:
+            b_val *= (10 ** (max_dec - b_dec))
+
+        result = self._multi_sub(a_val, b_val)
+
+        return self._format_decimal_result(result, max_dec)
+
+    def _decimal_mul(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
+        """使用演算法進行小數乘法"""
+        a_val, a_dec = self._parse_decimal(a)
+        b_val, b_dec = self._parse_decimal(b)
+
+        result = self._multi_mul(a_val, b_val)
+        total_dec = a_dec + b_dec
+
+        return self._format_decimal_result(result, total_dec)
+
+    def _decimal_div(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal], precision: int = 10) -> str:
+        """
+        使用演算法進行小數除法，計算到小數點後指定位數
+        如果整除則不顯示小數點
+        """
+        a_val, a_dec = self._parse_decimal(a)
+        b_val, b_dec = self._parse_decimal(b)
+
+        if b_val == 0:
+            raise ZeroDivisionError("Divisor cannot be zero")
+
+        negative = (a_val < 0) ^ (b_val < 0)
+        a_val = abs(a_val)
+        b_val = abs(b_val)
+
+        if a_dec > b_dec:
+            b_val *= (10 ** (a_dec - b_dec))
+        elif b_dec > a_dec:
+            a_val *= (10 ** (b_dec - a_dec))
+
+        quotient, remainder = self._multi_div(a_val, b_val)
+
+        if remainder == 0:
+            result = str(quotient)
+            if negative and quotient != 0:
+                result = "-" + result
+            return result
+
+        decimal_digits = []
+        for _ in range(precision):
+            remainder = self._multi_mul(remainder, 10)
+
+            digit_quotient, remainder = self._multi_div(remainder, b_val)
+            decimal_digits.append(digit_quotient)
+
+            if remainder == 0:
+                break
+
+        decimal_part = "".join(str(d) for d in decimal_digits)
+        decimal_part = decimal_part.rstrip("0")
+
+        if decimal_part:
+            result = f"{quotient}.{decimal_part}"
+        else:
+            result = str(quotient)
+
+        if negative and (quotient != 0 or decimal_part):
+            result = "-" + result
+
+        return result
+
+    def _is_decimal_input(self, value: Union[str, int, float]) -> bool:
+        """檢查輸入是否為小數"""
+        if isinstance(value, float):
+            return True
+        if isinstance(value, str) and "." in value:
+            return True
+        return False
+
     def _parse_expression(self, expression: str, operation: str) -> Tuple[int, int]:
         expression = expression.replace(" ", "").replace("=", "")
 
@@ -389,70 +556,82 @@ class MathFormerAPI:
 
         return int(parts[0]), int(parts[1])
 
-    def add(self, *args: Union[str, int]) -> str:
-        values = []
+    def add(self, *args: Union[str, int, float]) -> str:
+        """加法運算，支援整數和小數"""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
+
+        values = []
+        has_decimal = False
 
         if len(args) == 1 and isinstance(args[0], str) and "+" in args[0]:
             expression = args[0].replace(" ", "").replace("=", "")
             parts = expression.split("+")
-            try:
-                values = [int(p) for p in parts]
-            except ValueError:
-                raise ValueError(f"Cannot parse expression: {expression}")
+            values = parts
+            has_decimal = any("." in p for p in parts)
         else:
-            try:
-                values = [int(a) for a in args]
-            except ValueError:
-                raise ValueError(
-                    f"Arguments contain values that cannot be converted to integers: {args}"
-                )
+            values = list(args)
+            has_decimal = any(self._is_decimal_input(a) for a in args)
 
         if not values:
             return "0"
 
-        result = values[0]
-        for val in values[1:]:
-            result = self._multi_add(result, val)
+        if has_decimal:
+            result = str(values[0])
+            for val in values[1:]:
+                result = self._decimal_add(result, str(val))
+            return result
+        else:
+            int_values = [int(v) for v in values]
+            result = int_values[0]
+            for val in int_values[1:]:
+                result = self._multi_add(result, val)
+            return str(result)
 
-        return str(result)
-
-    def sub(self, *args: Union[str, int]) -> str:
-        values = []
+    def sub(self, *args: Union[str, int, float]) -> str:
+        """減法運算，支援整數和小數"""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
+
+        values = []
+        has_decimal = False
 
         if len(args) == 1 and isinstance(args[0], str) and "-" in args[0].lstrip("-"):
             expression = args[0].replace(" ", "").replace("=", "")
             if expression.startswith("-"):
                 temp_expr = expression[1:]
                 parts = temp_expr.split("-")
-                values = [-int(parts[0])] + [int(p) for p in parts[1:]]
+                values = ["-" + parts[0]] + parts[1:]
             else:
                 parts = expression.split("-")
-                values = [int(p) for p in parts]
+                values = parts
+            has_decimal = any("." in p.lstrip("-") for p in values)
         else:
-            try:
-                values = [int(a) for a in args]
-            except ValueError:
-                raise ValueError(
-                    f"Arguments contain values that cannot be converted to integers: {args}"
-                )
+            values = list(args)
+            has_decimal = any(self._is_decimal_input(a) for a in args)
 
         if not values:
             return "0"
 
-        result = values[0]
-        for val in values[1:]:
-            result = self._multi_sub(result, val)
+        if has_decimal:
+            result = str(values[0])
+            for val in values[1:]:
+                result = self._decimal_sub(result, str(val))
+            return result
+        else:
+            int_values = [int(v) for v in values]
+            result = int_values[0]
+            for val in int_values[1:]:
+                result = self._multi_sub(result, val)
+            return str(result)
 
-        return str(result)
-
-    def mul(self, *args: Union[str, int]) -> str:
-        values = []
+    def mul(self, *args: Union[str, int, float]) -> str:
+        """乘法運算，支援整數和小數"""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
+
+        values = []
+        has_decimal = False
 
         if (
             len(args) == 1
@@ -461,31 +640,38 @@ class MathFormerAPI:
         ):
             expression = args[0].replace(" ", "").replace("=", "").replace("×", "*")
             parts = expression.split("*")
-            try:
-                values = [int(p) for p in parts]
-            except ValueError:
-                raise ValueError(f"Cannot parse expression: {expression}")
+            values = parts
+            has_decimal = any("." in p for p in parts)
         else:
-            try:
-                values = [int(a) for a in args]
-            except ValueError:
-                raise ValueError(
-                    f"Arguments contain values that cannot be converted to integers: {args}"
-                )
+            values = list(args)
+            has_decimal = any(self._is_decimal_input(a) for a in args)
 
         if not values:
             return "0"
 
-        result = values[0]
-        for val in values[1:]:
-            result = self._multi_mul(result, val)
+        if has_decimal:
+            result = str(values[0])
+            for val in values[1:]:
+                result = self._decimal_mul(result, str(val))
+            return result
+        else:
+            int_values = [int(v) for v in values]
+            result = int_values[0]
+            for val in int_values[1:]:
+                result = self._multi_mul(result, val)
+            return str(result)
 
-        return str(result)
-
-    def div(self, *args: Union[str, int]) -> str:
-        values = []
+    def div(self, *args: Union[str, int, float], precision: int = 10) -> str:
+        """
+        除法運算，支援整數和小數
+        - 整數除法：無餘數時返回整數，有餘數時返回小數點後 precision 位
+        - 小數除法：使用小數運算，計算到小數點後 precision 位
+        """
         if len(args) == 0:
             raise ValueError("At least one argument is required")
+
+        values = []
+        has_decimal = False
 
         if (
             len(args) == 1
@@ -494,53 +680,61 @@ class MathFormerAPI:
         ):
             expression = args[0].replace(" ", "").replace("=", "").replace("÷", "/")
             parts = expression.split("/")
-            try:
-                values = [int(p) for p in parts]
-            except ValueError:
-                raise ValueError(f"Cannot parse expression: {expression}")
+            values = parts
+            has_decimal = any("." in p for p in parts)
         else:
-            try:
-                values = [int(a) for a in args]
-            except ValueError:
-                raise ValueError(
-                    f"Arguments contain values that cannot be converted to integers: {args}"
-                )
+            values = list(args)
+            has_decimal = any(self._is_decimal_input(a) for a in args)
 
         if not values:
             return "0"
 
-        result_q = values[0]
-        result_r = 0
-
+        result = str(values[0])
         for val in values[1:]:
-            result_q, result_r = self._multi_div(result_q, val)
-
-        if result_r == 0:
-            return str(result_q)
-        else:
-            return f"Q{result_q}R{result_r}"
+            result = self._decimal_div(result, str(val), precision=precision)
+        return result
 
     def calculate(
-        self, operation: str, a: Union[int, float, str], b: Union[int, float, str]
+        self, operation: str, a: Union[int, float, str], b: Union[int, float, str],
+        precision: int = 10
     ) -> str:
-        a_int = int(a)
-        b_int = int(b)
+        """
+        執行指定運算，支援整數和小數
+        
+        Args:
+            operation: 運算類型 ("add", "sub", "mul", "div")
+            a: 第一個運算元
+            b: 第二個運算元
+            precision: 除法的小數精度（預設 10 位）
+        
+        Returns:
+            運算結果的字串表示
+        """
+        has_decimal = (
+            self._is_decimal_input(a) or 
+            self._is_decimal_input(b)
+        )
 
         if operation == "add":
-            result = self._multi_add(a_int, b_int)
-            return str(result)
-        elif operation == "sub":
-            result = self._multi_sub(a_int, b_int)
-            return str(result)
-        elif operation == "mul":
-            result = self._multi_mul(a_int, b_int)
-            return str(result)
-        elif operation == "div":
-            quotient, remainder = self._multi_div(a_int, b_int)
-            if remainder == 0:
-                return str(quotient)
+            if has_decimal:
+                return self._decimal_add(a, b)
             else:
-                return f"Q{quotient}R{remainder}"
+                result = self._multi_add(int(a), int(b))
+                return str(result)
+        elif operation == "sub":
+            if has_decimal:
+                return self._decimal_sub(a, b)
+            else:
+                result = self._multi_sub(int(a), int(b))
+                return str(result)
+        elif operation == "mul":
+            if has_decimal:
+                return self._decimal_mul(a, b)
+            else:
+                result = self._multi_mul(int(a), int(b))
+                return str(result)
+        elif operation == "div":
+            return self._decimal_div(a, b, precision=precision)
         else:
             raise ValueError(f"Unknown operation type: {operation}")
 
