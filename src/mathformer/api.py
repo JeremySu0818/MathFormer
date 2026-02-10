@@ -1,15 +1,15 @@
 import re
+import os
+import warnings
 from decimal import Decimal, getcontext
 from typing import Optional, Dict, Any, List, Union, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 getcontext().prec = 50
 from pathlib import Path
 
 import torch
 from transformers import LlamaForCausalLM, logging
-
-import os
-import warnings
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 warnings.filterwarnings("ignore")
@@ -109,6 +109,43 @@ class MathFormer:
 
         return answer
 
+    def batch_predict(self, expressions: List[str]) -> List[str]:
+        """批次推理多個表達式，利用批次處理提升吞吐量"""
+        if not self._loaded:
+            self.load()
+
+        processed = []
+        for expr in expressions:
+            if "=" not in expr:
+                expr += "="
+            processed.append(expr)
+
+        inputs = self._tokenizer(processed, return_tensors="pt", padding=True)
+        input_ids = inputs["input_ids"].to(self.device)
+        attention_mask = inputs["attention_mask"].to(self.device)
+
+        with torch.no_grad():
+            outputs = self._model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=self.max_new_tokens,
+                pad_token_id=self._tokenizer.pad_token_id,
+                eos_token_id=self._tokenizer.eos_token_id,
+                do_sample=False,
+                repetition_penalty=1.1,
+            )
+
+        results = []
+        for output in outputs:
+            generated_text = self._tokenizer.decode(output, skip_special_tokens=True)
+            if "=" in generated_text:
+                answer = generated_text.split("=", 1)[1].strip()
+            else:
+                answer = generated_text.strip()
+            results.append(answer)
+
+        return results
+
     def __call__(self, expression: str) -> str:
         return self.predict(expression)
 
@@ -128,9 +165,11 @@ class MathFormerAPI:
         device: Optional[str] = None,
         max_new_tokens: int = 32,
         lazy_load: bool = True,
+        max_workers: Optional[int] = None,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.max_new_tokens = max_new_tokens
+        self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
 
         paths = model_paths or {}
         self._model_paths = {
@@ -174,6 +213,18 @@ class MathFormerAPI:
                 f"Unknown operation type: {operation}. Available: {list(self.models.keys())}"
             )
         return self.models[operation].predict(expression)
+
+    def _batch_raw_predict(self, operation: str, expressions: List[str]) -> List[str]:
+        """批次推理多個表達式，一次性送入模型以提升吞吐量"""
+        if operation not in self.models:
+            raise ValueError(
+                f"Unknown operation type: {operation}. Available: {list(self.models.keys())}"
+            )
+        if len(expressions) == 0:
+            return []
+        if len(expressions) == 1:
+            return [self.models[operation].predict(expressions[0])]
+        return self.models[operation].batch_predict(expressions)
 
     def _single_add(self, a: int, b: int) -> Tuple[int, int]:
         result_str = self._raw_predict("add", f"{a}+{b}")
@@ -271,6 +322,27 @@ class MathFormerAPI:
 
         return int("".join(str(d) for d in result[::-1]))
 
+    def _compute_partial_product(self, i: int, digit_b: int, digits_a: List[int]) -> List[Tuple[int, int]]:
+        """計算單一位數 digit_b 與所有 digits_a 的部分積（一行的結果）"""
+        expressions = [f"{digit_a}*{digit_b}" for digit_a in digits_a]
+        results = self._batch_raw_predict("mul", expressions)
+        products = [int(r) for r in results]
+
+        partial = []
+        carry = 0
+        for j, product in enumerate(products):
+            total = product + carry
+            partial.append((i + j, total % 10))
+            carry = total // 10
+
+        k = i + len(digits_a)
+        while carry > 0:
+            partial.append((k, carry % 10))
+            carry = carry // 10
+            k += 1
+
+        return partial
+
     def _multi_mul(self, a: int, b: int) -> int:
         negative = (a < 0) ^ (b < 0)
         a, b = abs(a), abs(b)
@@ -283,22 +355,43 @@ class MathFormerAPI:
 
         result = [0] * (len(digits_a) + len(digits_b))
 
-        for i, digit_b in enumerate(digits_b):
-            carry = 0
-            for j, digit_a in enumerate(digits_a):
-                product = self._single_mul(digit_a, digit_b)
+        if len(digits_b) >= 2:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._compute_partial_product, i, digit_b, digits_a
+                    ): i
+                    for i, digit_b in enumerate(digits_b)
+                }
 
-                total = product + carry + result[i + j]
+                partial_products = {}
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    partial_products[idx] = future.result()
 
-                result[i + j] = total % 10
-                carry = total // 10
+            for i in range(len(digits_b)):
+                for pos, val in partial_products[i]:
+                    result[pos] += val
 
-            k = i + len(digits_a)
-            while carry > 0:
-                total = carry + result[k]
-                result[k] = total % 10
-                carry = total // 10
-                k += 1
+            for pos in range(len(result) - 1):
+                if result[pos] >= 10:
+                    result[pos + 1] += result[pos] // 10
+                    result[pos] = result[pos] % 10
+        else:
+            for i, digit_b in enumerate(digits_b):
+                carry = 0
+                for j, digit_a in enumerate(digits_a):
+                    product = self._single_mul(digit_a, digit_b)
+                    total = product + carry + result[i + j]
+                    result[i + j] = total % 10
+                    carry = total // 10
+
+                k = i + len(digits_a)
+                while carry > 0:
+                    total = carry + result[k]
+                    result[k] = total % 10
+                    carry = total // 10
+                    k += 1
 
         while len(result) > 1 and result[-1] == 0:
             result.pop()
@@ -307,16 +400,24 @@ class MathFormerAPI:
         return -final_result if negative else final_result
 
     def _trial_division(self, dividend: int, divisor: int) -> Tuple[int, int]:
-        quotient = 0
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._multi_mul, divisor, q): q
+                for q in range(10)
+            }
 
+            products = {}
+            for future in as_completed(futures):
+                q = futures[future]
+                products[q] = future.result()
+
+        quotient = 0
         for q in range(9, -1, -1):
-            product = self._multi_mul(divisor, q)
-            if product <= dividend:
+            if products[q] <= dividend:
                 quotient = q
                 break
 
-        product = self._multi_mul(divisor, quotient)
-        remainder = self._multi_sub(dividend, product)
+        remainder = self._multi_sub(dividend, products[quotient])
 
         return quotient, remainder
 
@@ -743,18 +844,24 @@ class MathFormerAPI:
         operation: str,
         expressions: List[str],
     ) -> List[str]:
-        results = []
-        for expr in expressions:
-            if operation == "add":
-                results.append(self.add(expr))
-            elif operation == "sub":
-                results.append(self.sub(expr))
-            elif operation == "mul":
-                results.append(self.mul(expr))
-            elif operation == "div":
-                results.append(self.div(expr))
-            else:
-                raise ValueError(f"Unknown operation type: {operation}")
+        if operation not in ("add", "sub", "mul", "div"):
+            raise ValueError(f"Unknown operation type: {operation}")
+
+        op_func = getattr(self, operation)
+
+        if len(expressions) <= 1:
+            return [op_func(expr) for expr in expressions]
+
+        results = [None] * len(expressions)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(op_func, expr): idx
+                for idx, expr in enumerate(expressions)
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                results[idx] = future.result()
+
         return results
 
     def get_model_info(self) -> Dict[str, Any]:
