@@ -45,7 +45,7 @@ class MathFormer:
         max_new_tokens: int = 32,
     ):
         self.model_path = Path(model_path)
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or "cpu"
         self.max_new_tokens = max_new_tokens
 
         self._model: Optional[LlamaForCausalLM] = None
@@ -71,8 +71,6 @@ class MathFormer:
             del self._tokenizer
             self._tokenizer = None
         self._loaded = False
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
     @property
     def is_loaded(self) -> bool:
@@ -110,7 +108,7 @@ class MathFormer:
         return answer
 
     def batch_predict(self, expressions: List[str]) -> List[str]:
-        """批次推理多個表達式，利用批次處理提升吞吐量"""
+        """Batch inference for multiple expressions, using batch processing to improve throughput."""
         if not self._loaded:
             self.load()
 
@@ -167,7 +165,7 @@ class MathFormerAPI:
         lazy_load: bool = True,
         max_workers: Optional[int] = None,
     ):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or "cpu"
         self.max_new_tokens = max_new_tokens
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
 
@@ -215,7 +213,7 @@ class MathFormerAPI:
         return self.models[operation].predict(expression)
 
     def _batch_raw_predict(self, operation: str, expressions: List[str]) -> List[str]:
-        """批次推理多個表達式，一次性送入模型以提升吞吐量"""
+        """Batch inference for multiple expressions, sent to the model all at once to improve throughput."""
         if operation not in self.models:
             raise ValueError(
                 f"Unknown operation type: {operation}. Available: {list(self.models.keys())}"
@@ -323,7 +321,7 @@ class MathFormerAPI:
         return int("".join(str(d) for d in result[::-1]))
 
     def _compute_partial_product(self, i: int, digit_b: int, digits_a: List[int]) -> List[Tuple[int, int]]:
-        """計算單一位數 digit_b 與所有 digits_a 的部分積（一行的結果）"""
+        """Calculate the partial product of a single digit_b with all digits_a (result of one row)."""
         expressions = [f"{digit_a}*{digit_b}" for digit_a in digits_a]
         results = self._batch_raw_predict("mul", expressions)
         products = [int(r) for r in results]
@@ -468,8 +466,8 @@ class MathFormerAPI:
 
     def _parse_decimal(self, value: Union[str, int, float, Decimal]) -> Tuple[int, int]:
         """
-        將小數解析為 (整數值, 小數位數) 的形式
-        例如: 3.14 -> (314, 2), 100 -> (100, 0), 0.5 -> (5, 1)
+        Parse a decimal into (integer value, number of decimal places) format.
+        Example: 3.14 -> (314, 2), 100 -> (100, 0), 0.5 -> (5, 1)
         """
         if isinstance(value, (int, float)):
             value = str(value)
@@ -500,8 +498,8 @@ class MathFormerAPI:
 
     def _format_decimal_result(self, int_value: int, decimal_places: int) -> str:
         """
-        將 (整數值, 小數位數) 格式化為小數字串
-        例如: (314, 2) -> "3.14", (100, 0) -> "100"
+        Format (integer value, number of decimal places) into a decimal string.
+        Example: (314, 2) -> "3.14", (100, 0) -> "100"
         """
         if decimal_places == 0:
             return str(int_value)
@@ -530,7 +528,7 @@ class MathFormerAPI:
         return result
 
     def _decimal_add(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
-        """使用演算法進行小數加法"""
+        """Use algorithm for decimal addition."""
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -545,7 +543,7 @@ class MathFormerAPI:
         return self._format_decimal_result(result, max_dec)
 
     def _decimal_sub(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
-        """使用演算法進行小數減法"""
+        """Use algorithm for decimal subtraction."""
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -560,7 +558,7 @@ class MathFormerAPI:
         return self._format_decimal_result(result, max_dec)
 
     def _decimal_mul(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
-        """使用演算法進行小數乘法"""
+        """Use algorithm for decimal multiplication."""
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -571,8 +569,8 @@ class MathFormerAPI:
 
     def _decimal_div(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal], precision: int = 10) -> str:
         """
-        使用演算法進行小數除法，計算到小數點後指定位數
-        如果整除則不顯示小數點
+        Use algorithm for decimal division, calculating to specified decimal places.
+        If divisible, the decimal point is not shown.
         """
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
@@ -621,7 +619,7 @@ class MathFormerAPI:
         return result
 
     def _is_decimal_input(self, value: Union[str, int, float]) -> bool:
-        """檢查輸入是否為小數"""
+        """Check if the input is a decimal."""
         if isinstance(value, float):
             return True
         if isinstance(value, str) and "." in value:
@@ -658,7 +656,7 @@ class MathFormerAPI:
         return int(parts[0]), int(parts[1])
 
     def add(self, *args: Union[str, int, float]) -> str:
-        """加法運算，支援整數和小數"""
+        """Addition operation, supports integers and decimals."""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -690,7 +688,7 @@ class MathFormerAPI:
             return str(result)
 
     def sub(self, *args: Union[str, int, float]) -> str:
-        """減法運算，支援整數和小數"""
+        """Subtraction operation, supports integers and decimals."""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -727,7 +725,7 @@ class MathFormerAPI:
             return str(result)
 
     def mul(self, *args: Union[str, int, float]) -> str:
-        """乘法運算，支援整數和小數"""
+        """Multiplication operation, supports integers and decimals."""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -764,9 +762,9 @@ class MathFormerAPI:
 
     def div(self, *args: Union[str, int, float], precision: int = 10) -> str:
         """
-        除法運算，支援整數和小數
-        - 整數除法：無餘數時返回整數，有餘數時返回小數點後 precision 位
-        - 小數除法：使用小數運算，計算到小數點後 precision 位
+        Division operation, supports integers and decimals.
+        - Integer division: Returns an integer if there is no remainder, otherwise returns precision decimal places.
+        - Decimal division: Uses decimal arithmetic, calculating to precision decimal places.
         """
         if len(args) == 0:
             raise ValueError("At least one argument is required")
@@ -800,16 +798,16 @@ class MathFormerAPI:
         precision: int = 10
     ) -> str:
         """
-        執行指定運算，支援整數和小數
+        Execute specified operation, supports integers and decimals.
         
         Args:
-            operation: 運算類型 ("add", "sub", "mul", "div")
-            a: 第一個運算元
-            b: 第二個運算元
-            precision: 除法的小數精度（預設 10 位）
+            operation: Operation type ("add", "sub", "mul", "div")
+            a: First operand
+            b: Second operand
+            precision: Decimal precision for division (defaults to 10 digits)
         
         Returns:
-            運算結果的字串表示
+            String representation of the operation result
         """
         has_decimal = (
             self._is_decimal_input(a) or 

@@ -94,7 +94,7 @@ For more control over resource usage, you can use the `MathFormerAPI` class dire
 
 ### Managing Resources (Load/Unload)
 
-By default, models are lazy-loaded (loaded only when first requested). You can manually load all models at startup or unload them to free GPU/CPU memory.
+By default, models are lazy-loaded (loaded only when first requested). You can manually load all models at startup or unload them to free CPU memory.
 
 ```python
 from mathformer import MathFormerAPI
