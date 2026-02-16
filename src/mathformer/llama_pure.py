@@ -2,22 +2,18 @@ import json
 import math
 import struct
 import os
-from typing import List, Dict, Tuple, Optional, Any, Union
-from array import array
-from itertools import chain
-
 import operator
 
-# Pre-bind operators and math functions for speedup
 _add = operator.add
 _sub = operator.sub
 _mul = operator.mul
-_math_exp = math.exp
-_math_cos = math.cos
-_math_sin = math.sin
-_math_sqrt = math.sqrt
+_exp = math.exp
+_sqrt = math.sqrt
+_cos = math.cos
+_sin = math.sin
 
 
+# Keep public API functions
 def vec_add(a, b):
     return list(map(_add, a, b))
 
@@ -31,294 +27,78 @@ def vec_elem_mul(a, b):
     return list(map(_mul, a, b))
 
 def mat_vec_mul(W, x):
-    # sum(map(mul, row, x)) pushes inner loop to C
     return [sum(map(_mul, row, x)) for row in W]
 
 def softmax(x):
-    max_val = max(x)
-    exps = [_math_exp(val - max_val) for val in x]
-    sum_exps = sum(exps)
-    inv_sum = 1.0 / sum_exps
-    return [e * inv_sum for e in exps]
+    m = max(x)
+    e = [_exp(v - m) for v in x]
+    inv = 1.0 / sum(e)
+    return [v * inv for v in e]
 
 def silu(x):
-    return x / (1.0 + _math_exp(-x))
+    return x / (1.0 + _exp(-x))
 
 def rms_norm(x, w, eps):
-    sum_sq = sum(v * v for v in x)
-    scale = 1.0 / _math_sqrt(sum_sq / len(x) + eps)
-    return [val * scale * weight for val, weight in zip(x, w)]
+    sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
+    return [v * sc * wi for v, wi in zip(x, w)]
 
 
-def load_safetensors(path: str) -> Dict[str, Any]:
-    """Optimized safetensors loader: read entire file once, then slice via memoryview."""
+def load_safetensors(path):
     with open(path, "rb") as f:
-        file_data = f.read()  # Read entire file into memory at once
+        data = f.read()
 
-    header_size = struct.unpack_from("<Q", file_data, 0)[0]
-    header = json.loads(file_data[8:8 + header_size])
-    data_start = 8 + header_size
+    header_size = struct.unpack_from("<Q", data, 0)[0]
+    header = json.loads(data[8:8 + header_size])
+    base = 8 + header_size
 
     tensors = {}
     for name, info in header.items():
         if name == "__metadata__":
             continue
-
-        offsets = info["data_offsets"]
-        start = data_start + offsets[0]
-        end = data_start + offsets[1]
-
+        off = info["data_offsets"]
+        start = base + off[0]
+        end = base + off[1]
         shape = info["shape"]
         dtype = info["dtype"]
 
         if dtype == "F32":
-            num_elements = (end - start) // 4
-            # struct.unpack from buffer directly, no intermediate copy
-            raw_data = struct.unpack_from(f"<{num_elements}f", file_data, start)
-        elif dtype == "BF16" or dtype == "F16":
-            raise NotImplementedError(f"Dtype {dtype} not implemented in pure python reader yet")
+            n = (end - start) // 4
+            raw = struct.unpack_from(f"<{n}f", data, start)
+        elif dtype in ("BF16", "F16"):
+            raise NotImplementedError(f"{dtype} not supported")
         else:
             raise ValueError(f"Unknown dtype: {dtype}")
 
-        # Optimized reshape: for 1D, just convert tuple->list; for 2D, use slicing
+        # Store as tuples (immutable, faster iteration in CPython)
         if len(shape) == 1:
-            tensors[name] = list(raw_data)
+            tensors[name] = raw  # already tuple from unpack
         elif len(shape) == 2:
             rows, cols = shape
-            # Slice the flat tuple into rows - much faster than recursive reshape
-            tensors[name] = [list(raw_data[r * cols:(r + 1) * cols]) for r in range(rows)]
+            tensors[name] = tuple(raw[r * cols:(r + 1) * cols] for r in range(rows))
         else:
-            # Fallback for higher dimensions (unlikely for this model)
-            def reshape(data_iter, dims):
+            def reshape(it, dims):
                 if len(dims) == 1:
-                    return [next(data_iter) for _ in range(dims[0])]
-                return [reshape(data_iter, dims[1:]) for _ in range(dims[0])]
-            data_iter = iter(raw_data)
-            tensors[name] = reshape(data_iter, shape)
+                    return tuple(next(it) for _ in range(dims[0]))
+                return tuple(reshape(it, dims[1:]) for _ in range(dims[0]))
+            tensors[name] = reshape(iter(raw), shape)
 
     return tensors
 
 
-class Linear:
-    __slots__ = ('weight', 'bias')
-
-    def __init__(self, weight, bias=None):
-        self.weight = weight
-        self.bias = bias
-
-    def forward(self, x):
-        out = [sum(map(_mul, row, x)) for row in self.weight]
-        if self.bias:
-            out = list(map(_add, out, self.bias))
-        return out
-
-
-class RMSNorm:
-    __slots__ = ('weight', 'eps')
-
-    def __init__(self, weight, eps=1e-6):
-        self.weight = weight
-        self.eps = eps
-
-    def forward(self, x):
-        sum_sq = sum(v * v for v in x)
-        scale = 1.0 / _math_sqrt(sum_sq / len(x) + self.eps)
-        return [val * scale * w for val, w in zip(x, self.weight)]
-
-
-class LlamaRotaryEmbedding:
-    __slots__ = ('dim', 'cos_cached', 'sin_cached')
-
-    def __init__(self, dim: int, max_position_embeddings: int = 2048, base: float = 10000.0):
-        self.dim = dim
-        inv_freq = [1.0 / (base ** (i / dim)) for i in range(0, dim, 2)]
-
-        # Pre-compute and store as tuples (immutable, faster iteration)
-        cos_cached = []
-        sin_cached = []
-        for pos in range(max_position_embeddings):
-            cos_vals = []
-            sin_vals = []
-            for freq in inv_freq:
-                val = pos * freq
-                cos_vals.append(_math_cos(val))
-                sin_vals.append(_math_sin(val))
-            cos_cached.append(tuple(cos_vals))
-            sin_cached.append(tuple(sin_vals))
-        self.cos_cached = cos_cached
-        self.sin_cached = sin_cached
-
-    def apply_rotary_pos_emb(self, x, pos):
-        cos = self.cos_cached[pos]
-        sin = self.sin_cached[pos]
-        half = len(x) >> 1
-        out = [0.0] * (half << 1)
-        for i in range(half):
-            idx = i << 1
-            x1 = x[idx]
-            x2 = x[idx + 1]
-            c = cos[i]
-            s = sin[i]
-            out[idx] = x1 * c - x2 * s
-            out[idx + 1] = x1 * s + x2 * c
-        return out
-
-
-class LlamaAttention:
-    __slots__ = ('hidden_size', 'num_heads', 'head_dim', 'scale',
-                 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'rope',
-                 '_qkv_weight', '_head_slices')
-
-    def __init__(self, config: Dict, weights: Dict, prefix: str):
-        self.hidden_size = config["hidden_size"]
-        self.num_heads = config["num_attention_heads"]
-        self.head_dim = config["head_dim"]
-        self.scale = 1.0 / _math_sqrt(self.head_dim)
-
-        q_w = weights[f"{prefix}.q_proj.weight"]
-        k_w = weights[f"{prefix}.k_proj.weight"]
-        v_w = weights[f"{prefix}.v_proj.weight"]
-        self.o_proj = Linear(weights[f"{prefix}.o_proj.weight"])
-
-        # Fuse Q/K/V weights into a single matrix for one pass
-        self._qkv_weight = q_w + k_w + v_w  # List concat: 3*hidden rows
-
-        # Pre-compute head slice indices
-        hd = self.head_dim
-        hs = self.hidden_size
-        self._head_slices = [(h * hd, h * hd + hd) for h in range(self.num_heads)]
-
-        self.rope = LlamaRotaryEmbedding(self.head_dim, config["max_position_embeddings"], config["rope_parameters"]["rope_theta"])
-
-        # Not used anymore but keep references for compatibility
-        self.q_proj = None
-        self.k_proj = None
-        self.v_proj = None
-
-    def forward(self, x, pos, context_k, context_v):
-        # Fused QKV projection: one mat_vec_mul instead of three
-        qkv = [sum(map(_mul, row, x)) for row in self._qkv_weight]
-
-        hs = self.hidden_size
-        q = qkv[:hs]
-        k = qkv[hs:hs + hs]
-        v = qkv[hs + hs:]
-
-        num_heads = self.num_heads
-        head_dim = self.head_dim
-        scale = self.scale
-        rope_apply = self.rope.apply_rotary_pos_emb
-        head_slices = self._head_slices
-
-        q_heads = []
-        k_heads = []
-        v_heads = []
-
-        for start, end in head_slices:
-            q_h = q[start:end]
-            k_h = k[start:end]
-
-            q_h = rope_apply(q_h, pos)
-            k_h = rope_apply(k_h, pos)
-
-            q_heads.append(q_h)
-            k_heads.append(k_h)
-            v_heads.append(v[start:end])
-
-        new_k_row = k_heads
-        new_v_row = v_heads
-
-        # Use append for KV cache instead of list concat (O(1) amortized vs O(n))
-        all_k = context_k + [k_heads]
-        all_v = context_v + [v_heads]
-
-        seq_len = len(all_k)
-
-        # Pre-extract per-head KV for faster inner loop
-        concat_out = []
-        for h in range(num_heads):
-            q_h = q_heads[h]
-
-            # Compute attention scores
-            scores = []
-            for t in range(seq_len):
-                dot = sum(map(_mul, q_h, all_k[t][h]))
-                scores.append(dot * scale)
-
-            probs = softmax(scores)
-
-            # Weighted sum of values
-            out_h = [0.0] * head_dim
-            for t in range(seq_len):
-                v_t_h = all_v[t][h]
-                prob = probs[t]
-                for d in range(head_dim):
-                    out_h[d] += v_t_h[d] * prob
-
-            concat_out.extend(out_h)
-
-        final_out = self.o_proj.forward(concat_out)
-
-        return final_out, new_k_row, new_v_row
-
-
-class LlamaMLP:
-    __slots__ = ('_gate_weight', '_up_weight', '_down_weight')
-
-    def __init__(self, config: Dict, weights: Dict, prefix: str):
-        self._gate_weight = weights[f"{prefix}.gate_proj.weight"]
-        self._up_weight = weights[f"{prefix}.up_proj.weight"]
-        self._down_weight = weights[f"{prefix}.down_proj.weight"]
-
-    def forward(self, x):
-        # Inline mat_vec_mul to avoid function call overhead
-        gate = [sum(map(_mul, row, x)) for row in self._gate_weight]
-        up = [sum(map(_mul, row, x)) for row in self._up_weight]
-
-        # Fuse silu + elem_mul in single pass (avoid intermediate list)
-        inter = [silu(g) * u for g, u in zip(gate, up)]
-
-        return [sum(map(_mul, row, inter)) for row in self._down_weight]
-
-
-class LlamaDecoderLayer:
-    __slots__ = ('input_layernorm', 'post_attention_layernorm', 'self_attn', 'mlp')
-
-    def __init__(self, config: Dict, weights: Dict, layer_idx: int):
-        prefix = f"model.layers.{layer_idx}"
-        self.input_layernorm = RMSNorm(weights[f"{prefix}.input_layernorm.weight"], config["rms_norm_eps"])
-        self.post_attention_layernorm = RMSNorm(weights[f"{prefix}.post_attention_layernorm.weight"], config["rms_norm_eps"])
-        self.self_attn = LlamaAttention(config, weights, f"{prefix}.self_attn")
-        self.mlp = LlamaMLP(config, weights, f"{prefix}.mlp")
-
-    def forward(self, x, pos, kv_cache):
-        residual = x
-        x_norm = self.input_layernorm.forward(x)
-
-        context_k = kv_cache.get("k", [])
-        context_v = kv_cache.get("v", [])
-
-        attn_out, new_k, new_v = self.self_attn.forward(x_norm, pos, context_k, context_v)
-
-        x = list(map(_add, residual, attn_out))
-
-        kv_cache["k"] = context_k + [new_k]
-        kv_cache["v"] = context_v + [new_v]
-
-        residual = x
-        x_norm = self.post_attention_layernorm.forward(x)
-        mlp_out = self.mlp.forward(x_norm)
-
-        x = list(map(_add, residual, mlp_out))
-
-        return x, kv_cache
-
-
 class TinyLlama:
-    __slots__ = ('config', 'embed_tokens', 'norm', 'lm_head', 'layers',
-                 '_num_layers', '_eos_token_id')
+    """Fully-inlined Llama inference engine optimized for tiny models."""
 
-    def __init__(self, model_path: str):
+    __slots__ = (
+        'config', 'embed_tokens',
+        '_norm_w', '_norm_eps', '_lm_head_w',
+        '_num_layers', '_hidden_size', '_num_heads', '_head_dim',
+        '_attn_scale', '_intermediate_size',
+        '_rope_cos', '_rope_sin',
+        '_qkv_w', '_o_w', '_gate_up_w', '_down_w',
+        '_ln1_w', '_ln2_w', '_use_hd2',
+    )
+
+    def __init__(self, model_path):
         config_path = os.path.join(model_path, "config.json")
         weights_path = os.path.join(model_path, "model.safetensors")
 
@@ -326,75 +106,264 @@ class TinyLlama:
             config = json.load(f)
 
         self.config = config
-        weights = load_safetensors(weights_path)
+        W = load_safetensors(weights_path)
 
-        self.embed_tokens = weights["model.embed_tokens.weight"]
-        self.norm = RMSNorm(weights["model.norm.weight"], config["rms_norm_eps"])
-        self.lm_head = Linear(weights["lm_head.weight"])
+        self.embed_tokens = W["model.embed_tokens.weight"]
+        self._norm_w = W["model.norm.weight"]
+        self._norm_eps = config["rms_norm_eps"]
+        self._lm_head_w = W["lm_head.weight"]
 
-        num_layers = config["num_hidden_layers"]
-        self._num_layers = num_layers
-        self.layers = [LlamaDecoderLayer(config, weights, i) for i in range(num_layers)]
+        hs = config["hidden_size"]
+        nh = config["num_attention_heads"]
+        hd = config["head_dim"]
+        inter = config["intermediate_size"]
+        n_layers = config["num_hidden_layers"]
+        eps = config["rms_norm_eps"]
+        rope_theta = config["rope_parameters"]["rope_theta"]
+        max_pos = config["max_position_embeddings"]
 
-        # Free raw weights dict after building layers
-        del weights
+        self._num_layers = n_layers
+        self._hidden_size = hs
+        self._num_heads = nh
+        self._head_dim = hd
+        self._attn_scale = 1.0 / _sqrt(hd)
+        self._intermediate_size = inter
+        self._use_hd2 = (hd == 2)
+
+        # Pre-compute RoPE tables
+        inv_freq = [1.0 / (rope_theta ** (i / hd)) for i in range(0, hd, 2)]
+        self._rope_cos = [tuple(_cos(p * f) for f in inv_freq) for p in range(max_pos)]
+        self._rope_sin = [tuple(_sin(p * f) for f in inv_freq) for p in range(max_pos)]
+
+        # Per-layer weights: fused QKV + fused gate/up
+        qkv_w, o_w, gate_up_w, down_w, ln1_w, ln2_w = [], [], [], [], [], []
+        for i in range(n_layers):
+            pfx = f"model.layers.{i}"
+            qkv_w.append(
+                W[f"{pfx}.self_attn.q_proj.weight"] +
+                W[f"{pfx}.self_attn.k_proj.weight"] +
+                W[f"{pfx}.self_attn.v_proj.weight"]
+            )
+            o_w.append(W[f"{pfx}.self_attn.o_proj.weight"])
+            gate_up_w.append(
+                W[f"{pfx}.mlp.gate_proj.weight"] +
+                W[f"{pfx}.mlp.up_proj.weight"]
+            )
+            down_w.append(W[f"{pfx}.mlp.down_proj.weight"])
+            ln1_w.append(W[f"{pfx}.input_layernorm.weight"])
+            ln2_w.append(W[f"{pfx}.post_attention_layernorm.weight"])
+
+        self._qkv_w = qkv_w
+        self._o_w = o_w
+        self._gate_up_w = gate_up_w
+        self._down_w = down_w
+        self._ln1_w = ln1_w
+        self._ln2_w = ln2_w
+
+        del W
 
     def forward(self, input_ids, start_pos=0, kv_caches=None):
-        num_layers = self._num_layers
+        n_layers = self._num_layers
         if kv_caches is None:
-            kv_caches = [{} for _ in range(num_layers)]
+            kv_caches = [{"k": [], "v": []} for _ in range(n_layers)]
 
-        hidden_states = [self.embed_tokens[idx] for idx in input_ids]
-
+        hidden = [self.embed_tokens[idx] for idx in input_ids]
         seq_len = len(input_ids)
-        layers = self.layers
 
-        for i in range(num_layers):
-            layer = layers[i]
-            kv_i = kv_caches[i]
-            new_hidden_states = []
+        # Cache all locals for hot loop
+        hs = self._hidden_size
+        nh = self._num_heads
+        hd = self._head_dim
+        scale = self._attn_scale
+        rope_cos = self._rope_cos
+        rope_sin = self._rope_sin
+        eps = self._norm_eps
+        use_hd2 = self._use_hd2
+
+        for li in range(n_layers):
+            qkv_w = self._qkv_w[li]
+            o_w = self._o_w[li]
+            gu_w = self._gate_up_w[li]
+            d_w = self._down_w[li]
+            w1 = self._ln1_w[li]
+            w2 = self._ln2_w[li]
+
+            kv = kv_caches[li]
+            if "k" not in kv:
+                kv["k"] = []
+                kv["v"] = []
+            ck = kv["k"]
+            cv = kv["v"]
+
+            new_hidden = []
             for t in range(seq_len):
-                h, kv_i = layer.forward(hidden_states[t], start_pos + t, kv_i)
-                new_hidden_states.append(h)
-            kv_caches[i] = kv_i
-            hidden_states = new_hidden_states
+                x = hidden[t]
+                pos = start_pos + t
 
-        last_hidden = self.norm.forward(hidden_states[-1])
-        logits = self.lm_head.forward(last_hidden)
+                # --- RMSNorm 1 (inlined) ---
+                sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
+                xn = [v * sc * wi for v, wi in zip(x, w1)]
+
+                # --- Fused QKV projection ---
+                qkv = [sum(map(_mul, row, xn)) for row in qkv_w]
+                q_all = qkv[:hs]
+                k_all = qkv[hs:hs + hs]
+                v_all = qkv[hs + hs:]
+
+                cos_p = rope_cos[pos]
+                sin_p = rope_sin[pos]
+
+                if use_hd2:
+                    # === Specialized head_dim=2 path ===
+                    c0 = cos_p[0]
+                    s0 = sin_p[0]
+                    q_heads = []
+                    k_heads = []
+                    v_heads = []
+
+                    for h in range(nh):
+                        si = h << 1
+                        q1, q2 = q_all[si], q_all[si + 1]
+                        k1, k2 = k_all[si], k_all[si + 1]
+                        q_heads.append((q1 * c0 - q2 * s0, q1 * s0 + q2 * c0))
+                        k_heads.append((k1 * c0 - k2 * s0, k1 * s0 + k2 * c0))
+                        v_heads.append((v_all[si], v_all[si + 1]))
+
+                    # KV cache: in-place append O(1)
+                    ck.append(k_heads)
+                    cv.append(v_heads)
+                    T = len(ck)
+
+                    concat_out = []
+                    for h in range(nh):
+                        rq0, rq1 = q_heads[h]
+                        # Dot product + scale (unrolled dim=2)
+                        scores = [0.0] * T
+                        for tt in range(T):
+                            kk = ck[tt][h]
+                            scores[tt] = (rq0 * kk[0] + rq1 * kk[1]) * scale
+
+                        # Inline softmax
+                        sm = max(scores)
+                        e = [_exp(v - sm) for v in scores]
+                        inv = 1.0 / sum(e)
+
+                        # Weighted sum (unrolled dim=2)
+                        o0 = 0.0
+                        o1 = 0.0
+                        for tt in range(T):
+                            p = e[tt] * inv
+                            vv = cv[tt][h]
+                            o0 += vv[0] * p
+                            o1 += vv[1] * p
+                        concat_out.append(o0)
+                        concat_out.append(o1)
+                else:
+                    # === Generic path ===
+                    half_hd = hd >> 1
+                    q_heads = []
+                    k_heads = []
+                    v_heads = []
+
+                    for h in range(nh):
+                        si = h * hd
+                        rq = [0.0] * hd
+                        rk = [0.0] * hd
+                        for i in range(half_hd):
+                            idx = i << 1
+                            c = cos_p[i]
+                            s = sin_p[i]
+                            q1 = q_all[si + idx]
+                            q2 = q_all[si + idx + 1]
+                            k1 = k_all[si + idx]
+                            k2 = k_all[si + idx + 1]
+                            rq[idx] = q1 * c - q2 * s
+                            rq[idx + 1] = q1 * s + q2 * c
+                            rk[idx] = k1 * c - k2 * s
+                            rk[idx + 1] = k1 * s + k2 * c
+                        q_heads.append(rq)
+                        k_heads.append(rk)
+                        v_heads.append(v_all[si:si + hd])
+
+                    ck.append(k_heads)
+                    cv.append(v_heads)
+                    T = len(ck)
+
+                    concat_out = []
+                    for h in range(nh):
+                        q_h = q_heads[h]
+                        scores = [sum(map(_mul, q_h, ck[tt][h])) * scale for tt in range(T)]
+
+                        sm = max(scores)
+                        e = [_exp(v - sm) for v in scores]
+                        inv = 1.0 / sum(e)
+
+                        out_h = [0.0] * hd
+                        for tt in range(T):
+                            vv = cv[tt][h]
+                            p = e[tt] * inv
+                            for d in range(hd):
+                                out_h[d] += vv[d] * p
+                        concat_out.extend(out_h)
+
+                # --- O Projection ---
+                attn_out = [sum(map(_mul, row, concat_out)) for row in o_w]
+
+                # --- Residual 1 ---
+                x = list(map(_add, x, attn_out))
+
+                # --- RMSNorm 2 (inlined) ---
+                sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
+                xn = [v * sc * wi for v, wi in zip(x, w2)]
+
+                # --- MLP: fused gate+up projection ---
+                gu = [sum(map(_mul, row, xn)) for row in gu_w]
+                mid = len(gu) >> 1
+                inter = [silu(gu[i]) * gu[mid + i] for i in range(mid)]
+                mlp_out = [sum(map(_mul, row, inter)) for row in d_w]
+
+                # --- Residual 2 ---
+                x = list(map(_add, x, mlp_out))
+                new_hidden.append(x)
+
+            hidden = new_hidden
+
+        # Final norm + lm_head (only last token)
+        x = hidden[-1]
+        nw = self._norm_w
+        sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
+        x = [v * sc * wi for v, wi in zip(x, nw)]
+        logits = [sum(map(_mul, row, x)) for row in self._lm_head_w]
 
         return logits, kv_caches
 
     def generate(self, input_ids, max_new_tokens, eos_token_id):
         generated = []
-        num_layers = self._num_layers
-        kv_caches = [{} for _ in range(num_layers)]
+        kv_caches = [{"k": [], "v": []} for _ in range(self._num_layers)]
 
         logits, kv_caches = self.forward(input_ids, start_pos=0, kv_caches=kv_caches)
-
-        next_token = self._argmax(logits)
+        next_token = _argmax(logits)
         generated.append(next_token)
-
         if next_token == eos_token_id:
             return generated
 
         cur_pos = len(input_ids)
-
         for _ in range(max_new_tokens - 1):
             logits, kv_caches = self.forward([next_token], start_pos=cur_pos, kv_caches=kv_caches)
-            next_token = self._argmax(logits)
+            next_token = _argmax(logits)
             generated.append(next_token)
-
             if next_token == eos_token_id:
                 break
             cur_pos += 1
 
         return generated
 
-    def _argmax(self, logits):
-        best_idx = 0
-        best_val = logits[0]
-        for i in range(1, len(logits)):
-            if logits[i] > best_val:
-                best_val = logits[i]
-                best_idx = i
-        return best_idx
+
+def _argmax(logits):
+    best_idx = 0
+    best_val = logits[0]
+    for i in range(1, len(logits)):
+        if logits[i] > best_val:
+            best_val = logits[i]
+            best_idx = i
+    return best_idx
