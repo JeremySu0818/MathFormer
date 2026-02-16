@@ -13,7 +13,6 @@ _cos = math.cos
 _sin = math.sin
 
 
-# Keep public API functions
 def vec_add(a, b):
     return list(map(_add, a, b))
 
@@ -69,9 +68,8 @@ def load_safetensors(path):
         else:
             raise ValueError(f"Unknown dtype: {dtype}")
 
-        # Store as tuples (immutable, faster iteration in CPython)
         if len(shape) == 1:
-            tensors[name] = raw  # already tuple from unpack
+            tensors[name] = raw
         elif len(shape) == 2:
             rows, cols = shape
             tensors[name] = tuple(raw[r * cols:(r + 1) * cols] for r in range(rows))
@@ -130,12 +128,10 @@ class TinyLlama:
         self._intermediate_size = inter
         self._use_hd2 = (hd == 2)
 
-        # Pre-compute RoPE tables
         inv_freq = [1.0 / (rope_theta ** (i / hd)) for i in range(0, hd, 2)]
         self._rope_cos = [tuple(_cos(p * f) for f in inv_freq) for p in range(max_pos)]
         self._rope_sin = [tuple(_sin(p * f) for f in inv_freq) for p in range(max_pos)]
 
-        # Per-layer weights: fused QKV + fused gate/up
         qkv_w, o_w, gate_up_w, down_w, ln1_w, ln2_w = [], [], [], [], [], []
         for i in range(n_layers):
             pfx = f"model.layers.{i}"
@@ -170,7 +166,6 @@ class TinyLlama:
         hidden = [self.embed_tokens[idx] for idx in input_ids]
         seq_len = len(input_ids)
 
-        # Cache all locals for hot loop
         hs = self._hidden_size
         nh = self._num_heads
         hd = self._head_dim
@@ -200,11 +195,9 @@ class TinyLlama:
                 x = hidden[t]
                 pos = start_pos + t
 
-                # --- RMSNorm 1 (inlined) ---
                 sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
                 xn = [v * sc * wi for v, wi in zip(x, w1)]
 
-                # --- Fused QKV projection ---
                 qkv = [sum(map(_mul, row, xn)) for row in qkv_w]
                 q_all = qkv[:hs]
                 k_all = qkv[hs:hs + hs]
@@ -214,7 +207,6 @@ class TinyLlama:
                 sin_p = rope_sin[pos]
 
                 if use_hd2:
-                    # === Specialized head_dim=2 path ===
                     c0 = cos_p[0]
                     s0 = sin_p[0]
                     q_heads = []
@@ -229,7 +221,6 @@ class TinyLlama:
                         k_heads.append((k1 * c0 - k2 * s0, k1 * s0 + k2 * c0))
                         v_heads.append((v_all[si], v_all[si + 1]))
 
-                    # KV cache: in-place append O(1)
                     ck.append(k_heads)
                     cv.append(v_heads)
                     T = len(ck)
@@ -237,18 +228,15 @@ class TinyLlama:
                     concat_out = []
                     for h in range(nh):
                         rq0, rq1 = q_heads[h]
-                        # Dot product + scale (unrolled dim=2)
                         scores = [0.0] * T
                         for tt in range(T):
                             kk = ck[tt][h]
                             scores[tt] = (rq0 * kk[0] + rq1 * kk[1]) * scale
 
-                        # Inline softmax
                         sm = max(scores)
                         e = [_exp(v - sm) for v in scores]
                         inv = 1.0 / sum(e)
 
-                        # Weighted sum (unrolled dim=2)
                         o0 = 0.0
                         o1 = 0.0
                         for tt in range(T):
@@ -259,7 +247,6 @@ class TinyLlama:
                         concat_out.append(o0)
                         concat_out.append(o1)
                 else:
-                    # === Generic path ===
                     half_hd = hd >> 1
                     q_heads = []
                     k_heads = []
@@ -306,29 +293,23 @@ class TinyLlama:
                                 out_h[d] += vv[d] * p
                         concat_out.extend(out_h)
 
-                # --- O Projection ---
                 attn_out = [sum(map(_mul, row, concat_out)) for row in o_w]
 
-                # --- Residual 1 ---
                 x = list(map(_add, x, attn_out))
 
-                # --- RMSNorm 2 (inlined) ---
                 sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
                 xn = [v * sc * wi for v, wi in zip(x, w2)]
 
-                # --- MLP: fused gate+up projection ---
                 gu = [sum(map(_mul, row, xn)) for row in gu_w]
                 mid = len(gu) >> 1
                 inter = [silu(gu[i]) * gu[mid + i] for i in range(mid)]
                 mlp_out = [sum(map(_mul, row, inter)) for row in d_w]
 
-                # --- Residual 2 ---
                 x = list(map(_add, x, mlp_out))
                 new_hidden.append(x)
 
             hidden = new_hidden
 
-        # Final norm + lm_head (only last token)
         x = hidden[-1]
         nw = self._norm_w
         sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)

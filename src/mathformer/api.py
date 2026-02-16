@@ -90,10 +90,6 @@ class MathFormer:
         return answer
 
     def batch_predict(self, expressions: List[str]) -> List[str]:
-        """Batch inference for multiple expressions.
-        Since we are in pure Python, true batching matrix ops is not implemented.
-        We simply loop.
-        """
         if not self._loaded:
             self.load()
 
