@@ -104,7 +104,7 @@ class TestModuleExports:
     def test_version_exists(self):
         """Test version is defined"""
         assert hasattr(mathformer, "__version__")
-        assert mathformer.__version__ == "1.2.1"
+        assert mathformer.__version__ == "1.4.0"
 
 
 class TestDecimalAddition:
@@ -175,7 +175,7 @@ class TestDecimalDivision:
     def test_div_repeating_decimal(self):
         """Test repeating decimal with precision"""
         result = mathformer.div(1, 3)
-        assert result == "0.3333333333"  # 10 decimal places
+        assert result == "0.3333333333"  
 
     def test_div_custom_precision(self):
         """Test division with custom precision"""

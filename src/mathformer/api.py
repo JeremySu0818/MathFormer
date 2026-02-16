@@ -4,20 +4,12 @@ import warnings
 from decimal import Decimal, getcontext
 from typing import Optional, Dict, Any, List, Union, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-getcontext().prec = 50
 from pathlib import Path
 
-import torch
-from transformers import LlamaForCausalLM, logging
-
-os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-warnings.filterwarnings("ignore")
-logging.set_verbosity_error()
-logging.disable_progress_bar()
+getcontext().prec = 50
 
 from .tokenizer import MathTokenizer
-
+from .llama_pure import TinyLlama
 
 _BASE_DIR = Path(__file__).parent
 _DEFAULT_MODEL_PATHS = {
@@ -41,14 +33,13 @@ class MathFormer:
     def __init__(
         self,
         model_path: str,
-        device: Optional[str] = None,
+        device: Optional[str] = None, 
         max_new_tokens: int = 32,
     ):
         self.model_path = Path(model_path)
-        self.device = device or "cpu"
         self.max_new_tokens = max_new_tokens
 
-        self._model: Optional[LlamaForCausalLM] = None
+        self._model: Optional[TinyLlama] = None
         self._tokenizer: Optional[MathTokenizer] = None
         self._loaded = False
 
@@ -57,9 +48,7 @@ class MathFormer:
             return self
 
         self._tokenizer = MathTokenizer.from_pretrained(str(self.model_path))
-        self._model = LlamaForCausalLM.from_pretrained(str(self.model_path))
-        self._model.to(self.device)
-        self._model.eval()
+        self._model = TinyLlama(str(self.model_path))
         self._loaded = True
         return self
 
@@ -83,22 +72,15 @@ class MathFormer:
         if "=" not in expression:
             expression += "="
 
-        inputs = self._tokenizer(expression, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(self.device)
-        attention_mask = inputs["attention_mask"].to(self.device)
+        inputs = self._tokenizer(expression, padding=False)
+        input_ids = inputs["input_ids"][0]
+        output_ids = self._model.generate(
+            input_ids=input_ids,
+            max_new_tokens=self.max_new_tokens,
+            eos_token_id=self._tokenizer.eos_token_id,
+        )
 
-        with torch.no_grad():
-            outputs = self._model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=self.max_new_tokens,
-                pad_token_id=self._tokenizer.pad_token_id,
-                eos_token_id=self._tokenizer.eos_token_id,
-                do_sample=False,
-                repetition_penalty=1.1,
-            )
-
-        generated_text = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
+        generated_text = self._tokenizer.decode(output_ids, skip_special_tokens=True)
 
         if "=" in generated_text:
             answer = generated_text.split("=", 1)[1].strip()
@@ -108,40 +90,16 @@ class MathFormer:
         return answer
 
     def batch_predict(self, expressions: List[str]) -> List[str]:
-        """Batch inference for multiple expressions, using batch processing to improve throughput."""
+        """Batch inference for multiple expressions.
+        Since we are in pure Python, true batching matrix ops is not implemented.
+        We simply loop.
+        """
         if not self._loaded:
             self.load()
 
-        processed = []
-        for expr in expressions:
-            if "=" not in expr:
-                expr += "="
-            processed.append(expr)
-
-        inputs = self._tokenizer(processed, return_tensors="pt", padding=True)
-        input_ids = inputs["input_ids"].to(self.device)
-        attention_mask = inputs["attention_mask"].to(self.device)
-
-        with torch.no_grad():
-            outputs = self._model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=self.max_new_tokens,
-                pad_token_id=self._tokenizer.pad_token_id,
-                eos_token_id=self._tokenizer.eos_token_id,
-                do_sample=False,
-                repetition_penalty=1.1,
-            )
-
         results = []
-        for output in outputs:
-            generated_text = self._tokenizer.decode(output, skip_special_tokens=True)
-            if "=" in generated_text:
-                answer = generated_text.split("=", 1)[1].strip()
-            else:
-                answer = generated_text.strip()
-            results.append(answer)
-
+        for expr in expressions:
+            results.append(self.predict(expr))
         return results
 
     def __call__(self, expression: str) -> str:
@@ -165,7 +123,6 @@ class MathFormerAPI:
         lazy_load: bool = True,
         max_workers: Optional[int] = None,
     ):
-        self.device = device or "cpu"
         self.max_new_tokens = max_new_tokens
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
 
@@ -178,7 +135,6 @@ class MathFormerAPI:
         self.models: Dict[str, MathFormer] = {
             op: MathFormer(
                 model_path=str(path),
-                device=self.device,
                 max_new_tokens=self.max_new_tokens,
             )
             for op, path in self._model_paths.items()
@@ -213,20 +169,22 @@ class MathFormerAPI:
         return self.models[operation].predict(expression)
 
     def _batch_raw_predict(self, operation: str, expressions: List[str]) -> List[str]:
-        """Batch inference for multiple expressions, sent to the model all at once to improve throughput."""
         if operation not in self.models:
             raise ValueError(
                 f"Unknown operation type: {operation}. Available: {list(self.models.keys())}"
             )
         if len(expressions) == 0:
             return []
-        if len(expressions) == 1:
-            return [self.models[operation].predict(expressions[0])]
+        
         return self.models[operation].batch_predict(expressions)
 
     def _single_add(self, a: int, b: int) -> Tuple[int, int]:
         result_str = self._raw_predict("add", f"{a}+{b}")
-        result = int(result_str)
+        if not result_str: return 0, 0
+        try:
+            result = int(result_str)
+        except ValueError:
+            return 0, 0
         return result % 10, result // 10
 
     def _single_sub(self, a: int, b: int, borrow: int = 0) -> Tuple[int, int]:
@@ -234,22 +192,34 @@ class MathFormerAPI:
 
         if a_actual >= b:
             result_str = self._raw_predict("sub", f"{a_actual}-{b}")
-            return int(result_str), 0
+            try:
+                return int(result_str), 0
+            except ValueError:
+                return 0, 0
         else:
             a_with_borrow = a_actual + 10
             result_str = self._raw_predict("sub", f"{a_with_borrow}-{b}")
-            return int(result_str), 1
+            try:
+                return int(result_str), 1
+            except ValueError:
+                return 0, 0
 
     def _single_mul(self, a: int, b: int) -> int:
         result_str = self._raw_predict("mul", f"{a}*{b}")
-        return int(result_str)
+        try:
+            return int(result_str)
+        except ValueError:
+            return 0
 
     def _single_div(self, a: int, b: int) -> Tuple[int, int]:
         result_str = self._raw_predict("div", f"{a}/{b}")
         match = re.match(r"Q(\d+)R(\d+)", result_str)
         if match:
             return int(match.group(1)), int(match.group(2))
-        return int(result_str), 0
+        try:
+            return int(result_str), 0
+        except ValueError:
+            return 0, 0
 
     def _multi_add(self, a: int, b: int) -> int:
         if a < 0 or b < 0:
@@ -324,7 +294,12 @@ class MathFormerAPI:
         """Calculate the partial product of a single digit_b with all digits_a (result of one row)."""
         expressions = [f"{digit_a}*{digit_b}" for digit_a in digits_a]
         results = self._batch_raw_predict("mul", expressions)
-        products = [int(r) for r in results]
+        products = []
+        for r in results:
+            try:
+                products.append(int(r))
+            except ValueError:
+                products.append(0)
 
         partial = []
         carry = 0
@@ -354,18 +329,9 @@ class MathFormerAPI:
         result = [0] * (len(digits_a) + len(digits_b))
 
         if len(digits_b) >= 2:
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        self._compute_partial_product, i, digit_b, digits_a
-                    ): i
-                    for i, digit_b in enumerate(digits_b)
-                }
-
-                partial_products = {}
-                for future in as_completed(futures):
-                    idx = futures[future]
-                    partial_products[idx] = future.result()
+            partial_products = {}
+            for i, digit_b in enumerate(digits_b):
+                 partial_products[i] = self._compute_partial_product(i, digit_b, digits_a)
 
             for i in range(len(digits_b)):
                 for pos, val in partial_products[i]:
@@ -398,16 +364,9 @@ class MathFormerAPI:
         return -final_result if negative else final_result
 
     def _trial_division(self, dividend: int, divisor: int) -> Tuple[int, int]:
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self._multi_mul, divisor, q): q
-                for q in range(10)
-            }
-
-            products = {}
-            for future in as_completed(futures):
-                q = futures[future]
-                products[q] = future.result()
+        products = {}
+        for q in range(10):
+            products[q] = self._multi_mul(divisor, q)
 
         quotient = 0
         for q in range(9, -1, -1):
@@ -462,13 +421,7 @@ class MathFormerAPI:
 
         return quotient, remainder
 
-
-
     def _parse_decimal(self, value: Union[str, int, float, Decimal]) -> Tuple[int, int]:
-        """
-        Parse a decimal into (integer value, number of decimal places) format.
-        Example: 3.14 -> (314, 2), 100 -> (100, 0), 0.5 -> (5, 1)
-        """
         if isinstance(value, (int, float)):
             value = str(value)
         elif isinstance(value, Decimal):
@@ -497,10 +450,6 @@ class MathFormerAPI:
         return int_value, decimal_places
 
     def _format_decimal_result(self, int_value: int, decimal_places: int) -> str:
-        """
-        Format (integer value, number of decimal places) into a decimal string.
-        Example: (314, 2) -> "3.14", (100, 0) -> "100"
-        """
         if decimal_places == 0:
             return str(int_value)
 
@@ -528,7 +477,6 @@ class MathFormerAPI:
         return result
 
     def _decimal_add(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
-        """Use algorithm for decimal addition."""
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -543,7 +491,6 @@ class MathFormerAPI:
         return self._format_decimal_result(result, max_dec)
 
     def _decimal_sub(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
-        """Use algorithm for decimal subtraction."""
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -558,7 +505,6 @@ class MathFormerAPI:
         return self._format_decimal_result(result, max_dec)
 
     def _decimal_mul(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal]) -> str:
-        """Use algorithm for decimal multiplication."""
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -568,10 +514,6 @@ class MathFormerAPI:
         return self._format_decimal_result(result, total_dec)
 
     def _decimal_div(self, a: Union[str, int, float, Decimal], b: Union[str, int, float, Decimal], precision: int = 10) -> str:
-        """
-        Use algorithm for decimal division, calculating to specified decimal places.
-        If divisible, the decimal point is not shown.
-        """
         a_val, a_dec = self._parse_decimal(a)
         b_val, b_dec = self._parse_decimal(b)
 
@@ -619,44 +561,13 @@ class MathFormerAPI:
         return result
 
     def _is_decimal_input(self, value: Union[str, int, float]) -> bool:
-        """Check if the input is a decimal."""
         if isinstance(value, float):
             return True
         if isinstance(value, str) and "." in value:
             return True
         return False
 
-    def _parse_expression(self, expression: str, operation: str) -> Tuple[int, int]:
-        expression = expression.replace(" ", "").replace("=", "")
-
-        if operation == "add":
-            parts = expression.split("+")
-        elif operation == "sub":
-            if expression.startswith("-"):
-                rest = expression[1:]
-                if "-" in rest:
-                    idx = rest.index("-")
-                    parts = ["-" + rest[:idx], rest[idx + 1 :]]
-                else:
-                    raise ValueError(f"Cannot parse expression: {expression}")
-            else:
-                parts = expression.split("-")
-        elif operation == "mul":
-            expression = expression.replace("×", "*")
-            parts = expression.split("*")
-        elif operation == "div":
-            expression = expression.replace("÷", "/")
-            parts = expression.split("/")
-        else:
-            raise ValueError(f"Unknown operation type: {operation}")
-
-        if len(parts) != 2:
-            raise ValueError(f"Cannot parse expression: {expression}")
-
-        return int(parts[0]), int(parts[1])
-
     def add(self, *args: Union[str, int, float]) -> str:
-        """Addition operation, supports integers and decimals."""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -681,14 +592,16 @@ class MathFormerAPI:
                 result = self._decimal_add(result, str(val))
             return result
         else:
-            int_values = [int(v) for v in values]
+            try:
+               int_values = [int(v) for v in values]
+            except ValueError:
+               return "Error"
             result = int_values[0]
             for val in int_values[1:]:
                 result = self._multi_add(result, val)
             return str(result)
 
     def sub(self, *args: Union[str, int, float]) -> str:
-        """Subtraction operation, supports integers and decimals."""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -718,14 +631,16 @@ class MathFormerAPI:
                 result = self._decimal_sub(result, str(val))
             return result
         else:
-            int_values = [int(v) for v in values]
+            try:
+                int_values = [int(v) for v in values]
+            except ValueError:
+                return "Error"
             result = int_values[0]
             for val in int_values[1:]:
                 result = self._multi_sub(result, val)
             return str(result)
 
     def mul(self, *args: Union[str, int, float]) -> str:
-        """Multiplication operation, supports integers and decimals."""
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -754,18 +669,16 @@ class MathFormerAPI:
                 result = self._decimal_mul(result, str(val))
             return result
         else:
-            int_values = [int(v) for v in values]
+            try:
+                int_values = [int(v) for v in values]
+            except ValueError:
+                return "Error"
             result = int_values[0]
             for val in int_values[1:]:
                 result = self._multi_mul(result, val)
             return str(result)
 
     def div(self, *args: Union[str, int, float], precision: int = 10) -> str:
-        """
-        Division operation, supports integers and decimals.
-        - Integer division: Returns an integer if there is no remainder, otherwise returns precision decimal places.
-        - Decimal division: Uses decimal arithmetic, calculating to precision decimal places.
-        """
         if len(args) == 0:
             raise ValueError("At least one argument is required")
 
@@ -797,83 +710,13 @@ class MathFormerAPI:
         self, operation: str, a: Union[int, float, str], b: Union[int, float, str],
         precision: int = 10
     ) -> str:
-        """
-        Execute specified operation, supports integers and decimals.
-        
-        Args:
-            operation: Operation type ("add", "sub", "mul", "div")
-            a: First operand
-            b: Second operand
-            precision: Decimal precision for division (defaults to 10 digits)
-        
-        Returns:
-            String representation of the operation result
-        """
-        has_decimal = (
-            self._is_decimal_input(a) or 
-            self._is_decimal_input(b)
-        )
-
         if operation == "add":
-            if has_decimal:
-                return self._decimal_add(a, b)
-            else:
-                result = self._multi_add(int(a), int(b))
-                return str(result)
+            return self.add(a, b)
         elif operation == "sub":
-            if has_decimal:
-                return self._decimal_sub(a, b)
-            else:
-                result = self._multi_sub(int(a), int(b))
-                return str(result)
+            return self.sub(a, b)
         elif operation == "mul":
-            if has_decimal:
-                return self._decimal_mul(a, b)
-            else:
-                result = self._multi_mul(int(a), int(b))
-                return str(result)
+            return self.mul(a, b)
         elif operation == "div":
-            return self._decimal_div(a, b, precision=precision)
+            return self.div(a, b, precision=precision)
         else:
-            raise ValueError(f"Unknown operation type: {operation}")
-
-    def batch_predict(
-        self,
-        operation: str,
-        expressions: List[str],
-    ) -> List[str]:
-        if operation not in ("add", "sub", "mul", "div"):
-            raise ValueError(f"Unknown operation type: {operation}")
-
-        op_func = getattr(self, operation)
-
-        if len(expressions) <= 1:
-            return [op_func(expr) for expr in expressions]
-
-        results = [None] * len(expressions)
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(op_func, expr): idx
-                for idx, expr in enumerate(expressions)
-            }
-            for future in as_completed(futures):
-                idx = futures[future]
-                results[idx] = future.result()
-
-        return results
-
-    def get_model_info(self) -> Dict[str, Any]:
-        return {
-            op: {
-                "path": str(model.model_path),
-                "loaded": model.is_loaded,
-                "device": model.device,
-            }
-            for op, model in self.models.items()
-        }
-
-    def __enter__(self) -> "MathFormerAPI":
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.unload_all()
+            raise ValueError(f"Unknown operation: {operation}")

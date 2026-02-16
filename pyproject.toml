@@ -17,8 +17,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mathformer"
-version = "1.3.0"
-description = "A transformer-based math library"
+version = "1.4.0"
+description = "A transformer-based math library (Pure Python)"
 readme = "README.md"
 authors = [
   { name = "JeremySu0818", email = "xinghong.su0818@gmail.com" },
@@ -29,11 +29,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 requires-python = ">=3.8"
-dependencies = [
-    "torch>=2.0.0",
-    "transformers>=4.30.0",
-    "safetensors>=0.3.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [

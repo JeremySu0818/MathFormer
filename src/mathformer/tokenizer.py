@@ -1,7 +1,6 @@
 import os
 import json
 from typing import List, Dict, Union, Optional
-import torch
 
 
 class MathTokenizer:
@@ -34,6 +33,9 @@ class MathTokenizer:
                 tokenizer.model_max_length = config.get("model_max_length", 64)
                 tokenizer.padding_side = config.get("padding_side", "left")
 
+            if "model_max_length" in config:
+                tokenizer.model_max_length = config["model_max_length"]
+
         if os.path.exists(vocab_path):
             with open(vocab_path, "r", encoding="utf-8") as f:
                 vocab = json.load(f)
@@ -59,7 +61,7 @@ class MathTokenizer:
             input_ids_list.append(ids)
             attention_mask_list.append([1] * len(ids))
 
-        if return_tensors == "pt":
+        if padding:
             max_len = max(len(x) for x in input_ids_list)
             padded_ids = []
             padded_mask = []
@@ -76,17 +78,17 @@ class MathTokenizer:
                 padded_mask.append(mask)
 
             return {
-                "input_ids": torch.tensor(padded_ids, dtype=torch.long),
-                "attention_mask": torch.tensor(padded_mask, dtype=torch.long),
+                "input_ids": padded_ids,
+                "attention_mask": padded_mask,
             }
 
         return {"input_ids": input_ids_list, "attention_mask": attention_mask_list}
 
-    def decode(self, token_ids: Union[List[int], torch.Tensor], skip_special_tokens: bool = False) -> str:
+    def decode(self, token_ids: Union[int, List[int]], skip_special_tokens: bool = False) -> str:
         result = ""
-        if isinstance(token_ids, torch.Tensor):
-            token_ids = token_ids.tolist()
-
+        if isinstance(token_ids, int):
+            token_ids = [token_ids]
+            
         for idx in token_ids:
             char = self.id_to_token.get(idx, "<unk>")
             if skip_special_tokens and char in ["<pad>", "<s>", "</s>"]:
@@ -94,7 +96,7 @@ class MathTokenizer:
             result += char
         return result
 
-    def batch_decode(self, sequences: List, skip_special_tokens: bool = False) -> List[str]:
+    def batch_decode(self, sequences: List[List[int]], skip_special_tokens: bool = False) -> List[str]:
         return [self.decode(seq, skip_special_tokens=skip_special_tokens) for seq in sequences]
 
     def __len__(self) -> int:
