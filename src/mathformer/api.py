@@ -324,6 +324,11 @@ class MathFormerAPI:
 
         result = [0] * (len(digits_a) + len(digits_b))
 
+        def _add_to_result(pos, val):
+            if pos >= len(result):
+                result.extend([0] * (pos - len(result) + 1))
+            result[pos] += val
+
         if len(digits_b) >= 2:
             partial_products = {}
             for i, digit_b in enumerate(digits_b):
@@ -331,23 +336,29 @@ class MathFormerAPI:
 
             for i in range(len(digits_b)):
                 for pos, val in partial_products[i]:
-                    result[pos] += val
+                    _add_to_result(pos, val)
 
-            for pos in range(len(result) - 1):
+            pos = 0
+            while pos < len(result):
                 if result[pos] >= 10:
-                    result[pos + 1] += result[pos] // 10
+                    _add_to_result(pos + 1, result[pos] // 10)
                     result[pos] = result[pos] % 10
+                pos += 1
         else:
             for i, digit_b in enumerate(digits_b):
                 carry = 0
                 for j, digit_a in enumerate(digits_a):
                     product = self._single_mul(digit_a, digit_b)
+                    if i + j >= len(result):
+                        result.extend([0] * (i + j - len(result) + 1))
                     total = product + carry + result[i + j]
                     result[i + j] = total % 10
                     carry = total // 10
 
                 k = i + len(digits_a)
                 while carry > 0:
+                    if k >= len(result):
+                        result.extend([0] * (k - len(result) + 1))
                     total = carry + result[k]
                     result[k] = total % 10
                     carry = total // 10

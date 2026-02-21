@@ -88,12 +88,12 @@ class TinyLlama:
 
     __slots__ = (
         'config', 'embed_tokens',
-        '_norm_w', '_norm_eps', '_lm_head_w',
+        '_norm_eps', '_lm_head_w',
         '_num_layers', '_hidden_size', '_num_heads', '_head_dim',
         '_attn_scale', '_intermediate_size',
         '_rope_cos', '_rope_sin',
         '_qkv_w', '_o_w', '_gate_up_w', '_down_w',
-        '_ln1_w', '_ln2_w', '_use_hd2',
+        '_use_hd4',
     )
 
     def __init__(self, model_path):
@@ -107,9 +107,10 @@ class TinyLlama:
         W = load_safetensors(weights_path)
 
         self.embed_tokens = W["model.embed_tokens.weight"]
-        self._norm_w = W["model.norm.weight"]
         self._norm_eps = config["rms_norm_eps"]
-        self._lm_head_w = W["lm_head.weight"]
+        
+        nw = W["model.norm.weight"]
+        self._lm_head_w = [[w * nw[j] for j, w in enumerate(row)] for row in W["lm_head.weight"]]
 
         hs = config["hidden_size"]
         nh = config["num_attention_heads"]
@@ -126,35 +127,39 @@ class TinyLlama:
         self._head_dim = hd
         self._attn_scale = 1.0 / _sqrt(hd)
         self._intermediate_size = inter
-        self._use_hd2 = (hd == 2)
+        self._use_hd4 = (hd == 4)
 
         inv_freq = [1.0 / (rope_theta ** (i / hd)) for i in range(0, hd, 2)]
         self._rope_cos = [tuple(_cos(p * f) for f in inv_freq) for p in range(max_pos)]
         self._rope_sin = [tuple(_sin(p * f) for f in inv_freq) for p in range(max_pos)]
 
-        qkv_w, o_w, gate_up_w, down_w, ln1_w, ln2_w = [], [], [], [], [], []
+        qkv_w, o_w, gate_up_w, down_w = [], [], [], []
         for i in range(n_layers):
             pfx = f"model.layers.{i}"
-            qkv_w.append(
+            
+            raw_qkv = (
                 W[f"{pfx}.self_attn.q_proj.weight"] +
                 W[f"{pfx}.self_attn.k_proj.weight"] +
                 W[f"{pfx}.self_attn.v_proj.weight"]
             )
+            w1 = W[f"{pfx}.input_layernorm.weight"]
+            qkv_w.append([[w * w1[j] for j, w in enumerate(row)] for row in raw_qkv])
+            
             o_w.append(W[f"{pfx}.self_attn.o_proj.weight"])
-            gate_up_w.append(
+            
+            raw_gu = (
                 W[f"{pfx}.mlp.gate_proj.weight"] +
                 W[f"{pfx}.mlp.up_proj.weight"]
             )
+            w2 = W[f"{pfx}.post_attention_layernorm.weight"]
+            gate_up_w.append([[w * w2[j] for j, w in enumerate(row)] for row in raw_gu])
+            
             down_w.append(W[f"{pfx}.mlp.down_proj.weight"])
-            ln1_w.append(W[f"{pfx}.input_layernorm.weight"])
-            ln2_w.append(W[f"{pfx}.post_attention_layernorm.weight"])
 
         self._qkv_w = qkv_w
         self._o_w = o_w
         self._gate_up_w = gate_up_w
         self._down_w = down_w
-        self._ln1_w = ln1_w
-        self._ln2_w = ln2_w
 
         del W
 
@@ -162,7 +167,7 @@ class TinyLlama:
         n_layers = self._num_layers
         if kv_caches is None:
             kv_caches = [{"k": [], "v": []} for _ in range(n_layers)]
-
+        
         hidden = [self.embed_tokens[idx] for idx in input_ids]
         seq_len = len(input_ids)
 
@@ -173,15 +178,13 @@ class TinyLlama:
         rope_cos = self._rope_cos
         rope_sin = self._rope_sin
         eps = self._norm_eps
-        use_hd2 = self._use_hd2
+        use_hd4 = self._use_hd4
 
         for li in range(n_layers):
             qkv_w = self._qkv_w[li]
             o_w = self._o_w[li]
             gu_w = self._gate_up_w[li]
             d_w = self._down_w[li]
-            w1 = self._ln1_w[li]
-            w2 = self._ln2_w[li]
 
             kv = kv_caches[li]
             if "k" not in kv:
@@ -196,9 +199,7 @@ class TinyLlama:
                 pos = start_pos + t
 
                 sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
-                xn = [v * sc * wi for v, wi in zip(x, w1)]
-
-                qkv = [sum(map(_mul, row, xn)) for row in qkv_w]
+                qkv = [sum(map(_mul, row, x)) * sc for row in qkv_w]
                 q_all = qkv[:hs]
                 k_all = qkv[hs:hs + hs]
                 v_all = qkv[hs + hs:]
@@ -206,20 +207,30 @@ class TinyLlama:
                 cos_p = rope_cos[pos]
                 sin_p = rope_sin[pos]
 
-                if use_hd2:
-                    c0 = cos_p[0]
-                    s0 = sin_p[0]
+                if use_hd4:
+                    c0, c1 = cos_p[0], cos_p[1]
+                    s0, s1 = sin_p[0], sin_p[1]
                     q_heads = []
                     k_heads = []
                     v_heads = []
 
                     for h in range(nh):
-                        si = h << 1
-                        q1, q2 = q_all[si], q_all[si + 1]
-                        k1, k2 = k_all[si], k_all[si + 1]
-                        q_heads.append((q1 * c0 - q2 * s0, q1 * s0 + q2 * c0))
-                        k_heads.append((k1 * c0 - k2 * s0, k1 * s0 + k2 * c0))
-                        v_heads.append((v_all[si], v_all[si + 1]))
+                        si = h << 2
+                        q0, q1, q2, q3 = q_all[si], q_all[si + 1], q_all[si + 2], q_all[si + 3]
+                        k0, k1, k2, k3 = k_all[si], k_all[si + 1], k_all[si + 2], k_all[si + 3]
+                        q_heads.append((
+                            q0 * c0 - q2 * s0,
+                            q1 * c1 - q3 * s1,
+                            q2 * c0 + q0 * s0,
+                            q3 * c1 + q1 * s1
+                        ))
+                        k_heads.append((
+                            k0 * c0 - k2 * s0,
+                            k1 * c1 - k3 * s1,
+                            k2 * c0 + k0 * s0,
+                            k3 * c1 + k1 * s1
+                        ))
+                        v_heads.append((v_all[si], v_all[si + 1], v_all[si + 2], v_all[si + 3]))
 
                     ck.append(k_heads)
                     cv.append(v_heads)
@@ -227,11 +238,11 @@ class TinyLlama:
 
                     concat_out = []
                     for h in range(nh):
-                        rq0, rq1 = q_heads[h]
+                        rq0, rq1, rq2, rq3 = q_heads[h]
                         scores = [0.0] * T
                         for tt in range(T):
                             kk = ck[tt][h]
-                            scores[tt] = (rq0 * kk[0] + rq1 * kk[1]) * scale
+                            scores[tt] = (rq0 * kk[0] + rq1 * kk[1] + rq2 * kk[2] + rq3 * kk[3]) * scale
 
                         sm = max(scores)
                         e = [_exp(v - sm) for v in scores]
@@ -239,13 +250,19 @@ class TinyLlama:
 
                         o0 = 0.0
                         o1 = 0.0
+                        o2 = 0.0
+                        o3 = 0.0
                         for tt in range(T):
                             p = e[tt] * inv
                             vv = cv[tt][h]
                             o0 += vv[0] * p
                             o1 += vv[1] * p
+                            o2 += vv[2] * p
+                            o3 += vv[3] * p
                         concat_out.append(o0)
                         concat_out.append(o1)
+                        concat_out.append(o2)
+                        concat_out.append(o3)
                 else:
                     half_hd = hd >> 1
                     q_heads = []
@@ -257,17 +274,16 @@ class TinyLlama:
                         rq = [0.0] * hd
                         rk = [0.0] * hd
                         for i in range(half_hd):
-                            idx = i << 1
                             c = cos_p[i]
                             s = sin_p[i]
-                            q1 = q_all[si + idx]
-                            q2 = q_all[si + idx + 1]
-                            k1 = k_all[si + idx]
-                            k2 = k_all[si + idx + 1]
-                            rq[idx] = q1 * c - q2 * s
-                            rq[idx + 1] = q1 * s + q2 * c
-                            rk[idx] = k1 * c - k2 * s
-                            rk[idx + 1] = k1 * s + k2 * c
+                            qi_first = q_all[si + i]
+                            qi_second = q_all[si + i + half_hd]
+                            ki_first = k_all[si + i]
+                            ki_second = k_all[si + i + half_hd]
+                            rq[i] = qi_first * c - qi_second * s
+                            rq[i + half_hd] = qi_second * c + qi_first * s
+                            rk[i] = ki_first * c - ki_second * s
+                            rk[i + half_hd] = ki_second * c + ki_first * s
                         q_heads.append(rq)
                         k_heads.append(rk)
                         v_heads.append(v_all[si:si + hd])
@@ -298,9 +314,7 @@ class TinyLlama:
                 x = list(map(_add, x, attn_out))
 
                 sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
-                xn = [v * sc * wi for v, wi in zip(x, w2)]
-
-                gu = [sum(map(_mul, row, xn)) for row in gu_w]
+                gu = [sum(map(_mul, row, x)) * sc for row in gu_w]
                 mid = len(gu) >> 1
                 inter = [silu(gu[i]) * gu[mid + i] for i in range(mid)]
                 mlp_out = [sum(map(_mul, row, inter)) for row in d_w]
@@ -311,10 +325,8 @@ class TinyLlama:
             hidden = new_hidden
 
         x = hidden[-1]
-        nw = self._norm_w
         sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
-        x = [v * sc * wi for v, wi in zip(x, nw)]
-        logits = [sum(map(_mul, row, x)) for row in self._lm_head_w]
+        logits = [sum(map(_mul, row, x)) * sc for row in self._lm_head_w]
 
         return logits, kv_caches
 
