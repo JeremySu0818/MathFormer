@@ -9,7 +9,7 @@ from pathlib import Path
 getcontext().prec = 50
 
 from .tokenizer import MathTokenizer
-from .llama_pure import TinyLlama
+from .llama import TinyLlama
 
 _BASE_DIR = Path(__file__).parent
 _DEFAULT_MODEL_PATHS = {
