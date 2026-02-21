@@ -104,7 +104,7 @@ class TestModuleExports:
     def test_version_exists(self):
         """Test version is defined"""
         assert hasattr(mathformer, "__version__")
-        assert mathformer.__version__ == "1.4.0"
+        assert mathformer.__version__ == "2.0.0"
 
 
 class TestDecimalAddition:
