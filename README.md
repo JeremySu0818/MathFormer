@@ -33,7 +33,7 @@ print(f"123 + 456 = {result}")  # Output: 579
 
 # Subtraction
 result = mathformer.sub(1000, 250)
-print(f"1000 - 250 = {result}") # Output: 750
+print(f"456 - 123 = {result}") # Output: 333
 
 # Multiplication
 result = mathformer.mul(12, 12)
@@ -41,7 +41,7 @@ print(f"12 * 12 = {result}")    # Output: 144
 
 # Division (returns decimal for non-exact results)
 result = mathformer.div(100, 3)
-print(f"100 / 3 = {result}")    # Output: 0.3333333333
+print(f"100 / 3 = {result}")    # Output: 33.3333333333
 
 result = mathformer.div(100, 4)
 print(f"100 / 4 = {result}")    # Output: 25 (exact division)
@@ -100,7 +100,7 @@ By default, models are lazy-loaded (loaded only when first requested). You can m
 from mathformer import MathFormerAPI
 
 # Initialize API (lazy_load=False to load everything immediately)
-api = MathFormerAPI(lazy_load=True)
+api = MathFormerAPI(lazy_load=False)
 
 # Perform operations
 print(api.add(50, 50))
@@ -111,14 +111,15 @@ api.unload_all()
 
 ### Context Manager
 
-You can use `MathFormerAPI` as a context manager to ensure models are cleaned up after use:
+You can use the core `MathFormer` class as a context manager to ensure a single model is cleaned up after use:
 
 ```python
-from mathformer import MathFormerAPI
+from mathformer import MathFormer
 
-with MathFormerAPI() as api:
-    print(api.mul(99, 9))
-# Models are automatically unloaded here
+# You must provide the specific model path, e.g., for multiplication
+with MathFormer("path/to/mulformer") as model:
+    print(model("99*9"))
+# Model is automatically unloaded here
 ```
 
 ## How It Works
