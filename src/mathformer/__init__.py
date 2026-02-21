@@ -10,51 +10,79 @@ _default_api = MathFormerAPI()
 
 
 def add(*args: Union[str, int, float]) -> str:
-    """Addition operation, supports integers and decimals."""
+    """
+    Perform addition operation supporting both integers and decimals.
+    
+    :param args: Operands for addition (can be an expression string or multiple numeric values).
+    :type args: Union[str, int, float]
+    :return: Formatted string representing the addition result.
+    :rtype: str
+    """
     return _default_api.add(*args)
 
 
 def sub(*args: Union[str, int, float]) -> str:
-    """Subtraction operation, supports integers and decimals."""
+    """
+    Perform subtraction operation supporting both integers and decimals.
+    
+    :param args: Operands for subtraction (can be an expression string or multiple numeric values).
+    :type args: Union[str, int, float]
+    :return: Formatted string representing the subtraction result.
+    :rtype: str
+    """
     return _default_api.sub(*args)
 
 
 def mul(*args: Union[str, int, float]) -> str:
-    """Multiplication operation, supports integers and decimals."""
+    """
+    Perform multiplication operation supporting both integers and decimals.
+    
+    :param args: Operands for multiplication (can be an expression string or multiple numeric values).
+    :type args: Union[str, int, float]
+    :return: Formatted string representing the multiplication result.
+    :rtype: str
+    """
     return _default_api.mul(*args)
 
 
 def div(*args: Union[str, int, float], precision: int = 10) -> str:
     """
-    Division operation, supports integers and decimals.
+    Perform division operation supporting both integers and decimals.
     
-    Args:
-        *args: Division operands (can be an expression string or multiple values).
-        precision: Decimal precision, defaults to 10 digits.
-    
-    Returns:
-        String representation of the operation result, returns an integer if divisible, otherwise a decimal.
+    :param args: Operands for division (can be an expression string or multiple numeric values).
+    :type args: Union[str, int, float]
+    :param precision: Number of decimal places to calculate for the quotient. Defaults to 10.
+    :type precision: int
+    :return: Formatted string representing the division result (integer if divisible, otherwise decimal).
+    :rtype: str
     """
     return _default_api.div(*args, precision=precision)
 
 
 def calculate(operation: str, a: Union[str, int, float], b: Union[str, int, float], precision: int = 10) -> str:
     """
-    Execute specified operation, supports integers and decimals.
+    Execute a specified mathematical operation on two operands.
     
-    Args:
-        operation: Operation type ("add", "sub", "mul", "div").
-        a: First operand.
-        b: Second operand.
-        precision: Decimal precision for division (defaults to 10 digits).
-    
-    Returns:
-        String representation of the operation result.
+    :param operation: The type of operation to perform ("add", "sub", "mul", "div").
+    :type operation: str
+    :param a: The first operand.
+    :type a: Union[str, int, float]
+    :param b: The second operand.
+    :type b: Union[str, int, float]
+    :param precision: Decimal precision exclusively utilized for division operations. Defaults to 10.
+    :type precision: int
+    :return: Formatted string representation of the operation result.
+    :rtype: str
     """
     return _default_api.calculate(operation, a, b, precision=precision)
 
 
-def unload_models():
+def unload_models() -> None:
+    """
+    Unload all loaded default MathFormerAPI models from memory globally.
+    
+    :return: None
+    """
     _default_api.unload_all()
 
 

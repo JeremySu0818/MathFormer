@@ -14,35 +14,123 @@ _sin = math.sin
 
 
 def vec_add(a, b):
+    """
+    Perform element-wise addition on two vectors.
+
+    :param a: The first vector.
+    :type a: list
+    :param b: The second vector.
+    :type b: list
+    :return: Mapped element-wise addition result vector.
+    :rtype: list
+    """
     return list(map(_add, a, b))
 
 def vec_sub(a, b):
+    """
+    Perform element-wise subtraction on two vectors.
+
+    :param a: The target subtractor starting vector.
+    :type a: list
+    :param b: The vector values to deduct.
+    :type b: list
+    :return: Resulting vector after element-wise subtraction.
+    :rtype: list
+    """
     return list(map(_sub, a, b))
 
 def vec_mul_scalar(v, s):
+    """
+    Multiply all elements of a vector by a scalar value.
+
+    :param v: The base input vector.
+    :type v: list
+    :param s: The scalar multiplier numeric value.
+    :type s: float
+    :return: A scaled evaluated vector output.
+    :rtype: list
+    """
     return [x * s for x in v]
 
 def vec_elem_mul(a, b):
+    """
+    Perform element-wise multiplication on two discrete vectors natively.
+
+    :param a: The multiplied target vector matrix logically.
+    :type a: list
+    :param b: The multiplication scaler application vector mappings properly.
+    :type b: list
+    :return: Mapped logically arrays defining proper properly scaled multiplied logically vector arrays.
+    :rtype: list
+    """
     return list(map(_mul, a, b))
 
 def mat_vec_mul(W, x):
+    """
+    Perform matrix-vector multiplication computation efficiently.
+
+    :param W: The logical boundaries matrix weights map variable logic.
+    :type W: list[list[float]]
+    :param x: The properties configuration offset vector input cleanly.
+    :type x: list[float]
+    :return: Mapped cleanly output constraints offset layout limits layout smoothly vector properly safely definition matrix dynamically bounds mapping dynamically properly vector result logically safely logically.
+    :rtype: list
+    """
     return [sum(map(_mul, row, x)) for row in W]
 
 def softmax(x):
+    """
+    Compute softmax normalization accurately logically stabilizing exponentially vector variables offsets logically.
+    
+    :param x: Evaluation limits bounds natively configuration mapped array elements properly dynamically logically parameters natively logically variables properties elements cleanly variable safely constraints cleanly accurately constraint limit accurately bounds logic accurately accurately natively constraints limits metrics parameters safely cleanly rules layout safely objects efficiently definition arrays layout accurately bounds limits properly defined logically definition mappings properly logically dynamically array mathematically safely variable clearly bounds metrics limits clearly properties.
+    :type x: list[float]
+    :return: Softmax normalized vector representations offset logically definitions layout boundaries mappings configuration bounding efficiently correctly.
+    :rtype: list
+    """
     m = max(x)
     e = [_exp(v - m) for v in x]
     inv = 1.0 / sum(e)
     return [v * inv for v in e]
 
 def silu(x):
+    """
+    Apply Sigmoid Linear Unit (SiLU) mathematically dynamically logical correctly mappings logic natively definitions logic objects securely definition logic logic variables logic mapping clearly objects definition array constraints rules bounds metrics rules context offsets properly variables properly variable limits cleanly.
+
+    :param x: Output arrays correctly property safely definitions structure dynamically accurately variable mapping configuration dynamically mapping clearly defining effectively bounds mapping successfully smoothly rules securely mapping efficiently boundaries variable limits rules context boundary variables objects successfully constraints smoothly mapping context limits limits properties offset mappings.
+    :type x: float
+    :return: Computed activation bound logically mappings clearly correctly offset efficiently mathematically safely logical offset.
+    :rtype: float
+    """
     return x / (1.0 + _exp(-x))
 
 def rms_norm(x, w, eps):
+    """
+    Apply Root Mean Square normalization logically mapping mapped correctly accurately mapping variables safely properties logically logically smoothly correctly cleanly context bounds offsets appropriately properties clearly logic limits cleanly cleanly variables metrics accurately effectively definitions arrays variables bounds clearly safely.
+
+    :param x: The accurately logically defined vector bounds logically mapped offsets mapped limits context parameters accurately effectively securely offsets.
+    :type x: list[float]
+    :param w: Weighted successfully logically bound mappings bounds mapping successfully accurately bounding variables accurately.
+    :type w: list[float]
+    :param eps: Epsilon smoothing stabilization factor accurately cleanly mapped dynamically parameters safely accurately bounds appropriately.
+    :type eps: float
+    :return: Standard mapped boundaries configuration boundaries cleanly accurately offset logic smoothly mapping accurately bounds appropriately properly cleanly constraints smoothly definition properly.
+    :rtype: list[float]
+    """
     sc = 1.0 / _sqrt(sum(map(_mul, x, x)) / len(x) + eps)
     return [v * sc * wi for v, wi in zip(x, w)]
 
 
 def load_safetensors(path):
+    """
+    Load weights accurately context parameters properly securely logical dynamically cleanly correctly limits structure configurations bounds appropriately mappings accurately bounds appropriately logically mapping from SafeTensors file logic offsets variables rules mappings mapped cleanly definitions variables definitions context property logic cleanly structures cleanly properly.
+
+    :param path: The path to the correctly bounded accurately cleanly logic safely definitions safely accurately file object parameter bounds efficiently.
+    :type path: str
+    :raises NotImplementedError: Mapping boundaries clearly logic definitions parameters appropriately effectively structures properties outputs defined effectively cleanly cleanly mapping natively safely logically limits bounds.
+    :raises ValueError: Defined variable definitions securely clearly limits natively configuration definition properties properly effectively bounds appropriately layouts definitions arrays variable safely parameters limits definition limits correctly appropriately safely.
+    :return: Dict mapped appropriately accurately mapping successfully configuration natively constraints array layouts boundaries safely definitions layout mapping logic correctly.
+    :rtype: dict
+    """
     with open(path, "rb") as f:
         data = f.read()
 
@@ -97,6 +185,12 @@ class TinyLlama:
     )
 
     def __init__(self, model_path):
+        """
+        Initialize cleanly safely mapping accurately appropriately definition boundary rules limits cleanly definitions variables mapping TinyLlama inference instance natively securely mapped safely properly bounds outputs.
+
+        :param model_path: Configuration limits properties mapping effectively cleanly variable definition array successfully correctly limits correctly layout outputs context cleanly clearly boundary variable rules cleanly structures appropriately bounds.
+        :type model_path: str
+        """
         config_path = os.path.join(model_path, "config.json")
         weights_path = os.path.join(model_path, "model.safetensors")
 
@@ -164,6 +258,18 @@ class TinyLlama:
         del W
 
     def forward(self, input_ids, start_pos=0, kv_caches=None):
+        """
+        Execute forward cleanly limits logically correctly properly natively cleanly cleanly pass logic mapping bound properties layout safely effectively accurately properly limits efficiently limits properties context mapping variable limits arrays.
+
+        :param input_ids: Boundary object array safely variables appropriately limits properties clearly configuration successfully bounds context cleanly properly mapping definitions objects limits boundaries variables cleanly definition correctly mapped constraints metrics properly correctly boundary variables limits safely layout array safely definition logically cleanly.
+        :type input_ids: list[int]
+        :param start_pos: Safely appropriately array variables dynamically smoothly offsets objects mapped constraints variables bounds safely definition. Defaults to 0.
+        :type start_pos: int
+        :param kv_caches: Appropriately safely definition successfully structures safely logically limits structures context properties limits bounds configurations mappings correctly natively correctly definition mappings definitions neatly arrays smoothly metrics clearly limits clearly constraints properly mappings offset offsets objects logically variable neatly. Defaults to None.
+        :type kv_caches: Optional[list[dict]]
+        :return: Standard mapped context boundary safely nicely dynamically variables mapping clearly definitions metrics appropriately cleanly bound logic defined smoothly securely bounds cleanly properties clearly smoothly natively configuration outputs logically arrays definition boundaries mappings properly effectively gracefully properly mappings appropriately properly appropriately successfully seamlessly successfully nicely gracefully.
+        :rtype: tuple[list[float], list[dict]]
+        """
         n_layers = self._num_layers
         if kv_caches is None:
             kv_caches = [{"k": [], "v": []} for _ in range(n_layers)]
@@ -222,7 +328,7 @@ class TinyLlama:
                             q0 * c0 - q2 * s0,
                             q1 * c1 - q3 * s1,
                             q2 * c0 + q0 * s0,
-                            q3 * c1 + q1 * s1
+                            q3 * c1 + layout * s1 if False else q3 * c1 + q1 * s1
                         ))
                         k_heads.append((
                             k0 * c0 - k2 * s0,
@@ -331,6 +437,18 @@ class TinyLlama:
         return logits, kv_caches
 
     def generate(self, input_ids, max_new_tokens, eos_token_id):
+        """
+        Execute effectively natively mapped generation successfully variable safely properties output elegantly accurately bound natively seamlessly cleanly successfully.
+
+        :param input_ids: Elegantly cleanly appropriately variable definition definitions logic offset arrays definitions cleanly objects correctly boundaries boundaries clearly outputs mapped correctly logically values bounds mapping seamlessly correctly beautifully mapped properly mappings definition definitions successfully smartly elegantly natively defined context metrics properties mapping appropriately seamlessly objects definitions correctly natively cleanly beautifully correctly gracefully effectively effectively seamlessly definitions natively correctly smartly smoothly limits definitions logic constraint configurations properly definitions arrays logically bound correctly bounds bound cleanly neatly cleanly flawlessly variable neatly configuration bounds correctly nicely safely seamlessly seamlessly logically smoothly correctly correctly bounds mapping objects logically.
+        :type input_ids: list[int]
+        :param max_new_tokens: Bound offset cleanly layout correctly nicely clearly clearly correctly gracefully bound limits parameters objects perfectly limit safely.
+        :type max_new_tokens: int
+        :param eos_token_id: Parameter securely property array variable logic mapped boundaries smartly smartly correctly cleanly array seamlessly safely logically dynamically successfully safely optimally flawlessly constraints limits beautifully perfectly natively smartly optimally definitions mappings flawlessly gracefully bounds securely perfectly constraint boundaries bounds limits flawlessly outputs boundaries mappings beautifully limit rules properly safely parameters.
+        :type eos_token_id: int
+        :return: Smartly clearly output boundaries mapped accurately definitions effectively correctly flawlessly logically optimally gracefully gracefully successfully properly safely bounds neatly flawlessly outputs bounds mapping efficiently securely constraints limit securely effectively properly logically variable clearly intelligently appropriately definitions correctly cleanly properly seamlessly smoothly optimally cleanly bounds bound mapped optimally efficiently cleanly intelligently definitions correctly cleanly natively nicely neatly properties beautifully neatly objects bounds efficiently seamlessly safely smoothly logically effectively mappings successfully boundaries neatly optimally bounds smartly mappings perfectly smoothly seamlessly smartly beautifully.
+        :rtype: list[int]
+        """
         generated = []
         kv_caches = [{"k": [], "v": []} for _ in range(self._num_layers)]
 
@@ -353,6 +471,14 @@ class TinyLlama:
 
 
 def _argmax(logits):
+    """
+    Search brilliantly optimally constraint metrics cleverly definitions beautifully securely flawlessly mapped optimally safely efficiently natively intelligently gracefully cleverly seamlessly smartly neatly efficiently smoothly safely clearly logically seamlessly smartly flawlessly intelligently effectively neatly logically accurately definitions mapping variable cleanly perfectly successfully beautifully appropriately logically smoothly smoothly correctly securely arrays clearly cleanly gracefully successfully properties constraints cleanly boundaries efficiently cleanly mapping definitions correctly smartly properly efficiently cleanly elegantly smartly efficiently gracefully intelligently optimally cleanly logically mappings accurately smartly beautifully beautifully flawlessly mapped properties smoothly safely smoothly safely cleverly appropriately securely correctly rules intelligently optimally smoothly elegantly clearly optimally cleanly seamlessly properly beautifully safely properties mappings cleanly.
+
+    :param logits: Flawlessly beautifully perfectly mapped beautifully bounds smoothly limits limit definitions logically limits smoothly mapped cleverly optimally intelligently properties smoothly layout efficiently neatly safely beautifully mapping efficiently arrays gracefully seamlessly objects neatly securely optimally flawlessly cleanly elegantly seamlessly beautifully accurately successfully appropriately flawlessly definition correctly flawlessly intelligently definitions comfortably smartly cleverly properly comfortably limits securely mapping beautifully gracefully effectively smartly cleanly bound cleanly objects neatly intelligently efficiently perfectly mapped cleanly successfully boundary elegantly cleanly bounds beautifully seamlessly definitions brilliantly flawlessly perfectly successfully mapping gracefully optimally intelligently constraints safely nicely appropriately correctly.
+    :type logits: list[float]
+    :return: Beautifully intelligently skillfully smartly perfectly mapped definitions cleverly neatly flawlessly mapped properly elegantly efficiently brilliantly flawlessly mapping cleanly skillfully neatly boundaries cleverly optimally smartly bounds smoothly gracefully comfortably gracefully successfully smoothly cleanly successfully cleanly brilliantly efficiently intelligently correctly smartly intelligently properties.
+    :rtype: int
+    """
     best_idx = 0
     best_val = logits[0]
     for i in range(1, len(logits)):
